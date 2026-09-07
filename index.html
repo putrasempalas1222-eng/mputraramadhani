@@ -143,30 +143,9 @@
       align-items: center;
     }
 
-    .landing-brand-badge {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-bottom: 20px;
-      animation: rise 1s var(--ease) both;
-    }
-
-    .landing-brand-logo {
-      width: 78px;
-      height: 78px;
-      border-radius: 22px;
-      object-fit: cover;
-      box-shadow: 0 12px 34px -4px rgba(203, 168, 116, 0.3), 0 0 0 1.5px rgba(203, 168, 116, 0.22);
-      transition: transform 0.4s var(--ease), box-shadow 0.4s var(--ease);
-    }
-    .landing-brand-logo:hover {
-      transform: translateY(-2px) scale(1.04);
-      box-shadow: 0 18px 42px -4px rgba(203, 168, 116, 0.42), 0 0 0 2px rgba(203, 168, 116, 0.4);
-    }
-
     .val-mark {
       font-family: var(--serif);
-      font-size: 38px;
+      font-size: 34px;
       font-weight: 600;
       letter-spacing: 0.005em;
       color: var(--text);
@@ -178,38 +157,17 @@
 
     .val-desc-lead {
       max-width: 540px;
-      margin: 14px auto 0;
-      font-size: 14.5px;
-      line-height: 1.62;
+      margin: 8px auto 0;
+      font-size: 15px;
+      line-height: 1.5;
       color: var(--text-dim);
       letter-spacing: 0.005em;
       animation: rise 1s var(--ease) both;
       animation-delay: 0.08s;
     }
 
-    .val-question {
-      margin: 22px 0 6px;
-      font-family: var(--serif);
-      font-size: 18px;
-      font-style: italic;
-      font-weight: 400;
-      color: var(--accent-bright);
-      animation: rise 1s var(--ease) both;
-      animation-delay: 0.12s;
-    }
-
-    .val-sub {
-      margin: 0 0 34px;
-      font-size: 13px;
-      color: var(--text-faint);
-      letter-spacing: 0.02em;
-      animation: rise 1s var(--ease) both;
-      animation-delay: 0.16s;
-    }
-
     @media (max-width: 640px) {
       .val-mark { font-size: 28px; }
-      .landing-brand-logo { width: 64px; height: 64px; border-radius: 18px; }
       .val-desc-lead { font-size: 13.5px; padding: 0 8px; }
     }
 
@@ -223,7 +181,7 @@
       flex-wrap: wrap;
       justify-content: center;
       gap: 10px;
-      margin-bottom: 52px;
+      margin: 26px 0 24px;
       animation: rise 1s var(--ease) both;
       animation-delay: 0.24s;
     }
@@ -232,7 +190,7 @@
       background: transparent;
       border: 1px solid var(--border);
       color: var(--text-dim);
-      padding: 10px 19px;
+      padding: 9px 17px;
       border-radius: 22px;
       font-size: 13px;
       letter-spacing: 0.005em;

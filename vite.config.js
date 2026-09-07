@@ -44,14 +44,19 @@ export default defineConfig(({ mode }) => {
       });
       server.middlewares.use("/api/chat", async (req, res) => {
         if (req.method !== "POST") { res.statusCode = 405; return res.end(); }
-        const key = (env.OPENROUTER_API_KEY || "").trim();
-        if (!key) { res.statusCode = 500; return res.end(JSON.stringify({ error: "OPENROUTER_API_KEY is not configured on the server." })); }
+        const keys = [env.OPENROUTER_API_KEY, env.OPENROUTER_API_KEY_FALLBACK, env.OPENROUTER_API_KEY_FALLBACK_2, env.OPENROUTER_API_KEY_FALLBACK_3, env.OPENROUTER_API_KEY_FALLBACK_4, env.OPENROUTER_API_KEY_FALLBACK_5, env.OPENROUTER_API_KEY_FALLBACK_6, env.OPENROUTER_API_KEY_FALLBACK_7].map((key) => (key || "").trim()).filter(Boolean);
+        if (!keys.length) { res.statusCode = 500; return res.end(JSON.stringify({ error: "OPENROUTER_API_KEY is not configured on the server." })); }
         let raw = ""; for await (const part of req) raw += part;
         try {
           const body = JSON.parse(raw);
           const messages = Array.isArray(body.messages) ? body.messages.filter((message) => message.role !== "system") : [];
           const selectedModel = body.model || env.OPENROUTER_MODEL || "openrouter/free";
-          const upstream = await fetch("https://openrouter.ai/api/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, "X-Title": "M Putra Ramadhani" }, body: JSON.stringify({ ...body, model: selectedModel, messages: [{ role: "system", content: identityPrompt }, ...messages] }) });
+          const payload = JSON.stringify({ ...body, model: selectedModel, messages: [{ role: "system", content: identityPrompt }, ...messages] });
+          let upstream;
+          for (const key of keys) {
+            upstream = await fetch("https://openrouter.ai/api/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, "X-Title": "M Putra Ramadhani" }, body: payload });
+            if (upstream.status !== 429) break;
+          }
           if (!upstream.ok) { res.statusCode = upstream.status; return res.end(await upstream.text()); }
           res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
           for await (const chunk of upstream.body) res.write(chunk);

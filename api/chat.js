@@ -3,27 +3,22 @@ const IDENTITY_PROMPT = `You are M Putra Ramadhani. Your only public name and id
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  const apiKey = (process.env.OPENROUTER_API_KEY || "").trim();
-  if (!apiKey) return res.status(503).json({ error: "OPENROUTER_API_KEY belum dikonfigurasi di server." });
+  const apiKeys = [process.env.OPENROUTER_API_KEY, process.env.OPENROUTER_API_KEY_FALLBACK, process.env.OPENROUTER_API_KEY_FALLBACK_2, process.env.OPENROUTER_API_KEY_FALLBACK_3, process.env.OPENROUTER_API_KEY_FALLBACK_4, process.env.OPENROUTER_API_KEY_FALLBACK_5, process.env.OPENROUTER_API_KEY_FALLBACK_6, process.env.OPENROUTER_API_KEY_FALLBACK_7]
+    .map((key) => (key || "").trim())
+    .filter(Boolean);
+  if (!apiKeys.length) return res.status(503).json({ error: "OPENROUTER_API_KEY belum dikonfigurasi di server." });
 
   try {
     const body = req.body || {};
     const messages = Array.isArray(body.messages)
       ? body.messages.filter((message) => message.role !== "system")
       : [];
-    const upstream = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-        "X-Title": "M Putra Ramadhani",
-      },
-      body: JSON.stringify({
-        ...body,
-        model: body.model || process.env.OPENROUTER_MODEL || "openrouter/free",
-        messages: [{ role: "system", content: IDENTITY_PROMPT }, ...messages],
-      }),
-    });
+    const payload = JSON.stringify({ ...body, model: body.model || process.env.OPENROUTER_MODEL || "openrouter/free", messages: [{ role: "system", content: IDENTITY_PROMPT }, ...messages] });
+    let upstream;
+    for (const apiKey of apiKeys) {
+      upstream = await fetch("https://openrouter.ai/api/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}`, "X-Title": "M Putra Ramadhani" }, body: payload });
+      if (upstream.status !== 429) break;
+    }
 
     if (!upstream.ok) return res.status(upstream.status).send(await upstream.text());
     res.setHeader("Content-Type", "text/event-stream");

@@ -2057,13 +2057,8 @@ function App() {
     {!inChat && (
       <div className="landing">
         <div className="landing-inner">
-          <div className="landing-brand-badge">
-            <img src={brandLogo} alt={t.websiteName || "M Putra Ramadhani - Ai Indonesia"} className="landing-brand-logo" />
-          </div>
-          <h1 className="val-mark">{t.websiteName || "M Putra Ramadhani - Ai Indonesia"}</h1>
+          <h1 className="val-mark">{t.appName || "M Putra Ramadhani"}</h1>
           <p className="val-desc-lead">{t.brandDesc}</p>
-          <p className="val-question">{t.landingQuestion}</p>
-          <p className="val-sub">{t.landingSub}</p>
           <div className="suggestions">{(t.suggestions || suggestions).map((suggestion) => <button key={suggestion} className="suggestion-btn" onClick={() => !isLimitReached && send(suggestion)} disabled={isLimitReached}>{suggestion}</button>)}</div>
           <div className="composer-wrap">
             <Composer

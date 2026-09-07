@@ -72,15 +72,18 @@ app.get("/api/models", async (_req, res) => {
 });
 
 app.post("/api/chat", async (req, res) => {
-  const key = (process.env.OPENROUTER_API_KEY || "").trim();
-  if (!key) return res.status(500).json({ error: "OPENROUTER_API_KEY is not configured on the server." });
+  const keys = [process.env.OPENROUTER_API_KEY, process.env.OPENROUTER_API_KEY_FALLBACK, process.env.OPENROUTER_API_KEY_FALLBACK_2, process.env.OPENROUTER_API_KEY_FALLBACK_3, process.env.OPENROUTER_API_KEY_FALLBACK_4, process.env.OPENROUTER_API_KEY_FALLBACK_5, process.env.OPENROUTER_API_KEY_FALLBACK_6, process.env.OPENROUTER_API_KEY_FALLBACK_7]
+    .map((key) => (key || "").trim())
+    .filter(Boolean);
+  if (!keys.length) return res.status(500).json({ error: "OPENROUTER_API_KEY is not configured on the server." });
   try {
     const selectedModel = req.body.model || process.env.OPENROUTER_MODEL || "openrouter/free";
-    const upstream = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, "X-Title": "M Putra Ramadhani" },
-      body: JSON.stringify({ ...req.body, model: selectedModel, messages: [{ role: "system", content: IDENTITY_PROMPT }, ...(Array.isArray(req.body.messages) ? req.body.messages.filter((message) => message.role !== "system") : [])] }),
-    });
+    const payload = JSON.stringify({ ...req.body, model: selectedModel, messages: [{ role: "system", content: IDENTITY_PROMPT }, ...(Array.isArray(req.body.messages) ? req.body.messages.filter((message) => message.role !== "system") : [])] });
+    let upstream;
+    for (const key of keys) {
+      upstream = await fetch("https://openrouter.ai/api/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, "X-Title": "M Putra Ramadhani" }, body: payload });
+      if (upstream.status !== 429) break;
+    }
     if (!upstream.ok) return res.status(upstream.status).send(await upstream.text());
     res.set({ "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
     for await (const chunk of upstream.body) res.write(chunk);
