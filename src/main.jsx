@@ -1410,6 +1410,24 @@ function AccountPage({
                   <p className="profile-sub-desc">
                     {userPlan === "plus" ? tr.planPlusDesc : tr.planFreeDesc}
                   </p>
+                  {userPlan === "plus" && (
+                    <div className="profile-sub-expiry">
+                      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="profile-sub-expiry-icon">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                        <line x1="16" y1="2" x2="16" y2="6" />
+                        <line x1="8" y1="2" x2="8" y2="6" />
+                        <line x1="3" y1="10" x2="21" y2="10" />
+                      </svg>
+                      <span>
+                        {lang === "id" ? "Masa aktif hingga" : "Valid until"}:{" "}
+                        <strong>
+                          {(userProfile?.planExpiresAt || userProfile?.expiresAt || userProfile?.planExpiry)
+                            ? formatDate(userProfile?.planExpiresAt || userProfile?.expiresAt || userProfile?.planExpiry)
+                            : (lang === "id" ? "30 hari sejak aktivasi" : "30 days from activation")}
+                        </strong>
+                      </span>
+                    </div>
+                  )}
                 </div>
                 {userPlan !== "plus" ? (
                   <button
@@ -1420,7 +1438,9 @@ function AccountPage({
                     Tingkatkan ke Plus →
                   </button>
                 ) : (
-                  <span style={{ fontSize: 14 }}>Aktif</span>
+                  <span className="profile-plan-pill plus">
+                    {lang === "id" ? "Aktif" : "Active"}
+                  </span>
                 )}
               </div>
             </div>
@@ -1561,7 +1581,12 @@ function AccountPage({
               <div className="upgrade-cta-box">
                 {userPlan === "plus" ? (
                   <div className="upgrade-already-active">
-                    Paket Plus aktif
+                    <div>Paket Plus aktif</div>
+                    {(userProfile?.planExpiresAt || userProfile?.expiresAt || userProfile?.planExpiry) && (
+                      <small style={{ display: "block", marginTop: "4px", fontSize: "12px", opacity: 0.85 }}>
+                        {lang === "id" ? "Masa aktif hingga" : "Valid until"}: {formatDate(userProfile?.planExpiresAt || userProfile?.expiresAt || userProfile?.planExpiry)}
+                      </small>
+                    )}
                   </div>
                 ) : (
                   <>
