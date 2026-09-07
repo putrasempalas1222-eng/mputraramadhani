@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signInWithPopup, signOut, updateProfile } from "firebase/auth";
-import { ref, push, set, remove, onValue, get } from "firebase/database";
+import { ref, push, set, update, remove, onValue, get } from "firebase/database";
 import { auth, db, googleProvider } from "./firebase";
 import { CURATED_FREE_MODELS, getSavedModel, saveModel, findModel } from "./models";
 import { detectLanguage, saveLanguage, getTranslation } from "./i18n";
@@ -95,7 +95,7 @@ function updateChatUrl(uid, chatId, page = null, replace = false) {
     } else {
       window.history.pushState({ uid, chatId, page }, "", newUrl);
     }
-  } catch {}
+  } catch { }
 }
 
 function ComposerModelPicker({ selectedModel, onSelectModel, t, userPlan = "free", onUpgrade }) {
@@ -353,6 +353,51 @@ function ComposerModelPicker({ selectedModel, onSelectModel, t, userPlan = "free
   );
 }
 
+function readFileAttachment(file) {
+  return new Promise((resolve) => {
+    const isImage = file.type?.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(file.name || "");
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const rawDataUrl = e.target.result;
+      if (!isImage) {
+        return resolve({ name: file.name, type: file.type || "text/plain", dataUrl: rawDataUrl, isImage: false });
+      }
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const maxDim = 1280;
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressed = canvas.toDataURL("image/jpeg", 0.82);
+          resolve({ name: file.name, type: "image/jpeg", dataUrl: compressed, isImage: true });
+        } catch {
+          resolve({ name: file.name, type: file.type || "image/jpeg", dataUrl: rawDataUrl, isImage: true });
+        }
+      };
+      img.onerror = () => {
+        resolve({ name: file.name, type: file.type || "image/jpeg", dataUrl: rawDataUrl, isImage: true });
+      };
+      img.src = rawDataUrl;
+    };
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+}
+
 function Composer({
   onSend,
   disabled,
@@ -363,13 +408,20 @@ function Composer({
   userMessageCount = 0,
   freeLimit = 10,
   userPlan = "free",
+  attachmentRemaining = 3,
   onNew,
   onUpgrade,
   t,
 }) {
   const tr = t || getTranslation("id");
   const [text, setText] = useState("");
+  const [attachments, setAttachments] = useState([]);
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const [attachmentMode, setAttachmentMode] = useState("all");
+  const [uploadBannerDismissed, setUploadBannerDismissed] = useState(false);
   const input = useRef(null);
+  const fileInput = useRef(null);
+  const isUploadLimitReached = userPlan === "free" && attachmentRemaining <= 0;
 
   useEffect(() => {
     if (autoFocus && !isLimitReached) input.current?.focus();
@@ -386,23 +438,43 @@ function Composer({
   const send = () => {
     if (isLimitReached) return;
     const value = text.trim();
-    if (!value || disabled) return;
+    if ((!value && !attachments.length) || disabled) return;
     setText("");
-    onSend(value);
+    if (input.current) {
+      input.current.style.height = "auto";
+    }
+    const outgoingAttachments = attachments;
+    setAttachments([]);
+    onSend(value, outgoingAttachments);
+  };
+
+  const addFiles = async (fileList) => {
+    const allowedCount = userPlan === "plus" ? 3 : Math.max(0, Math.min(3, attachmentRemaining - attachments.length));
+    const files = Array.from(fileList || []).slice(0, allowedCount);
+    const accepted = files.filter((file) => {
+      if (file.size > 15 * 1024 * 1024) return false;
+      const isImage = (file.type && file.type.startsWith("image/")) || /\.(png|jpe?g|webp|gif|bmp|svg|heic|jfif)$/i.test(file.name || "");
+      const isDoc = file.type === "application/pdf" || /\.(pdf|txt|md|csv|json)$/i.test(file.name || "");
+      return isImage || isDoc;
+    });
+    const loaded = (await Promise.all(accepted.map(readFileAttachment))).filter(Boolean);
+    setAttachments((current) => [...current, ...loaded]);
+  };
+
+  const openAttachmentPicker = (mode) => {
+    setAttachmentMode(mode);
+    setAttachmentMenuOpen(false);
+    requestAnimationFrame(() => fileInput.current?.click());
   };
 
   return (
     <>
-      {isLimitReached && (
+      {isLimitReached ? (
         <div className="chat-limit-banner">
-          <div className="chat-limit-info">
-            <span className="chat-limit-badge">{tr.limitBadge}</span>
-            <div className="chat-limit-text">
-              <span className="chat-limit-title"></span>
-              <span className="chat-limit-desc">
-                {tr.limitDesc}
-              </span>
-            </div>
+          <div className="chat-limit-left">
+            <span className="chat-limit-text">
+              <strong></strong> {"Pesan anda sudah sampai batas ayo mulai chat baru atau upgrade ke Plus."}
+            </span>
           </div>
           <div className="chat-limit-actions">
             <button
@@ -411,7 +483,7 @@ function Composer({
               onClick={onNew}
               title={tr.btnNewChat}
             >
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="12" y1="5" x2="12" y2="19" />
                 <line x1="5" y1="12" x2="19" y2="12" />
               </svg>
@@ -427,15 +499,41 @@ function Composer({
             </button>
           </div>
         </div>
-      )}
+      ) : isUploadLimitReached && !uploadBannerDismissed ? (
+        <div className="upload-limit-banner">
+          <div className="upload-limit-left">
+            <span className="upload-limit-text">
+              <strong></strong> { "Menggugah anda sudah sampai batas ayo upgrade ke Plus untuk menggugah tanpa batas."}
+            </span>
+          </div>
+          <div className="upload-limit-right">
+            <button
+              type="button"
+              className="upload-limit-upgrade-btn"
+              onClick={onUpgrade}
+              title={tr.btnUpgrade}
+            >
+              {tr.btnUpgrade}
+            </button>
+            <button
+              type="button"
+              className="upload-limit-close-btn"
+              onClick={() => setUploadBannerDismissed(true)}
+              aria-label="Tutup pemberitahuan"
+              title="Tutup"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {attachments.length > 0 && <div className="composer-attachments">{attachments.map((file, index) => <div className="composer-attachment" key={`${file.name}-${index}`}>{file.isImage ? <img src={file.dataUrl} alt="Lampiran" /> : <span className="attachment-file-icon">FILE</span>}<span>{file.name}</span><button type="button" onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label="Hapus lampiran">×</button></div>)}</div>}
       <div className={`composer ${isLimitReached ? "composer-locked" : ""}`}>
-        <ComposerModelPicker
-          selectedModel={selectedModel}
-          onSelectModel={onSelectModel}
-          t={tr}
-          userPlan={userPlan}
-          onUpgrade={onUpgrade}
-        />
+        <input ref={fileInput} className="attachment-input" type="file" multiple accept={attachmentMode === "photo" ? "image/*" : "application/pdf,.txt,.md,.csv,.json"} onChange={(event) => { void addFiles(event.target.files); event.target.value = ""; }} />
+        <div className="attachment-menu-wrap">
+          {attachmentMenuOpen && <div className="attachment-menu"><button type="button" onClick={() => openAttachmentPicker("photo")}>Foto</button><button type="button" onClick={() => openAttachmentPicker("file")}>File</button></div>}
+          <button className="attachment-btn" type="button" disabled={disabled || isLimitReached || attachments.length >= 3 || (userPlan === "free" && attachmentRemaining <= attachments.length)} onClick={() => setAttachmentMenuOpen((open) => !open)} title="Tambah lampiran" aria-label="Tambah lampiran"><span>+</span></button>
+        </div>
         <textarea
           ref={input}
           rows="1"
@@ -457,10 +555,17 @@ function Composer({
             }
           }}
         />
+        <ComposerModelPicker
+          selectedModel={selectedModel}
+          onSelectModel={onSelectModel}
+          t={tr}
+          userPlan={userPlan}
+          onUpgrade={onUpgrade}
+        />
         <button
           className="send-btn"
           onClick={send}
-          disabled={disabled || isLimitReached || !text.trim()}
+          disabled={disabled || isLimitReached || (!text.trim() && !attachments.length)}
           aria-label={isLimitReached ? tr.limitAria : tr.sendAria}
           title={isLimitReached ? tr.limitAria : tr.sendAria}
         >
@@ -798,7 +903,7 @@ function Actions({ text, onRegenerate, t, disabled }) {
       await navigator.clipboard.writeText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {}
+    } catch { }
   };
   return (
     <div className="msg-actions">
@@ -940,10 +1045,10 @@ function Sidebar({ chats, activeId, onOpen, onNew, onDelete, user, isOpen, onTog
           </div>
           <div className="sidebar-tools">
             <button aria-label={tr.searchTooltip} onClick={() => setSearchOpen((open) => !open)}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg>
             </button>
             <button onClick={onToggle} aria-label={tr.closeSidebar}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9 4v16" /></svg>
             </button>
           </div>
         </div>
@@ -1224,7 +1329,7 @@ function AccountPage({
           setPayment((current) => current ? { ...current, paid: true } : current);
           onPaymentConfirmed?.(payment.orderId, userPromo?.promo?.id || "");
         }
-      } catch {}
+      } catch { }
     };
     void checkStatus();
     const timer = setInterval(checkStatus, 7000);
@@ -1315,7 +1420,7 @@ function AccountPage({
                     Tingkatkan ke Plus →
                   </button>
                 ) : (
-                  <span style={{fontSize: 14 }}>Aktif</span>
+                  <span style={{ fontSize: 14 }}>Aktif</span>
                 )}
               </div>
             </div>
@@ -1381,8 +1486,8 @@ function AccountPage({
                     {userPlan === "plus"
                       ? "Paket Aktif Anda"
                       : discountPercent > 0
-                      ? `Penawaran Khusus — Diskon ${discountPercent}%`
-                      : tr.popularBadge}
+                        ? `Penawaran Khusus — Diskon ${discountPercent}%`
+                        : tr.popularBadge}
                   </span>
                   <h2 className="upgrade-plan-title">{tr.plusPlanName}</h2>
                   <p className="upgrade-plan-statement">{tr.plusDesc}</p>
@@ -1469,8 +1574,8 @@ function AccountPage({
                         {buying
                           ? tr.btnComingSoon
                           : discountPercent > 0
-                          ? `Berlangganan Plus — ${buttonPromoPriceText} / bln`
-                          : `${tr.btnBuyPlus} — Rp 500rb / bln`}
+                            ? `Berlangganan Plus — ${buttonPromoPriceText} / bln`
+                            : `${tr.btnBuyPlus} — Rp 500rb / bln`}
                       </span>
                     </button>
                     <span className="upgrade-subtext-reassure">
@@ -1530,6 +1635,7 @@ function App() {
   const [conversationId, setConversationId] = useState(null);
   const [regenCount, setRegenCount] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(() => typeof window !== "undefined" && window.innerWidth > 900);
+  const [previewImage, setPreviewImage] = useState(null);
   const [lang, setLang] = useState(detectLanguage);
   const t = getTranslation(lang);
 
@@ -1568,11 +1674,16 @@ function App() {
             void set(profileRef, { ...data, photoURL: user.photoURL, updatedAt: Date.now() })
               .catch((error) => console.warn("Gagal menyimpan foto profil:", error.code));
           }
-          const dynamicPlan = data.plan || "free";
+          const plusExpired = data.plan === "plus" && (!data.planExpiresAt || Number(data.planExpiresAt) <= Date.now());
+          const dynamicPlan = plusExpired ? "free" : (data.plan || "free");
+          if (plusExpired) {
+            void update(profileRef, { plan: "free", planName: "Free", planExpiredAt: Date.now(), updatedAt: Date.now() })
+              .catch((error) => console.warn("Gagal memperbarui masa Plus:", error.code));
+          }
           setUserPlan(dynamicPlan);
           try {
             localStorage.setItem("val_ai_user_plan", dynamicPlan);
-          } catch {}
+          } catch { }
         } else {
           // Inisialisasi data profil pengguna pertama kali ke database
           const initialProfile = {
@@ -1691,7 +1802,7 @@ function App() {
               }
             });
           }
-        } catch {}
+        } catch { }
       },
       (err) => {
         console.warn("Gagal mendengarkan database promo:", err);
@@ -1881,6 +1992,9 @@ function App() {
   }, [messages, streaming]);
 
   const FREE_CHAT_LIMIT = 10;
+  const todayKey = new Date().toLocaleDateString("en-CA");
+  const uploadUsage = userProfile?.attachmentUsage || {};
+  const freeAttachmentRemaining = userPlan === "plus" ? Infinity : Math.max(0, 3 - (uploadUsage.date === todayKey ? Number(uploadUsage.count || 0) : 0));
   const userMessageCount = messages.filter((m) => m.role === "user").length;
   const totalUsageCount = userMessageCount + (regenCount || 0);
   const isLimitReached = userPlan === "free" && totalUsageCount >= FREE_CHAT_LIMIT;
@@ -1897,9 +2011,10 @@ function App() {
 
   const saveChat = async (id, nextMessages, customRegen = regenCount) => {
     if (!user || !id) return;
+    const storedMessages = nextMessages.filter((message) => !message.pending && !message.error).map(({ attachments, ...message }) => ({ ...message, attachments: attachments?.map(({ name, type, isImage, dataUrl }) => ({ name, type, isImage, dataUrl: isImage ? (dataUrl || null) : null })) || [] }));
     await set(ref(db, `users/${user.uid}/conversations/${id}`), {
       title: nextMessages.find((message) => message.role === "user")?.content?.slice(0, 46) || t.newConversation,
-      messages: nextMessages.filter((message) => !message.pending && !message.error),
+      messages: storedMessages,
       regenCount: customRegen || 0,
       updatedAt: Date.now(),
       expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000
@@ -1910,12 +2025,23 @@ function App() {
     setStreaming(true);
     setMessages((current) => [...current, { role: "assistant", content: "", pending: true, at: assistantTime }]);
     try {
+      const apiMessages = history.map(({ role, content, attachments }) => {
+        if (!attachments?.some((file) => file.dataUrl)) return { role, content };
+        const parts = [{ type: "text", text: content || "Tolong analisis lampiran ini." }];
+        attachments.forEach((file) => {
+          if (!file.dataUrl) return;
+          if (file.isImage) parts.push({ type: "image_url", image_url: { url: file.dataUrl } });
+          else if (file.type === "application/pdf") parts.push({ type: "file", file: { filename: file.name, file_data: file.dataUrl } });
+          else parts.push({ type: "text", text: `\n\nIsi file ${file.name}:\n${atob(file.dataUrl.split(",")[1] || "")}` });
+        });
+        return { role, content: parts };
+      });
       const response = await fetch(CONFIG.apiUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: selectedModel,
-          messages: [{ role: "system", content: SYSTEM_PROMPT }, ...history],
+          messages: [{ role: "system", content: SYSTEM_PROMPT }, ...apiMessages],
           temperature: CONFIG.temperature,
           max_tokens: CONFIG.maxTokens,
           stream: true
@@ -1963,11 +2089,18 @@ function App() {
     void saveChat(id, nextMessages, customRegen)
       .catch((error) => console.warn("Penyimpanan riwayat gagal:", error.code));
   };
-  const send = (content) => {
+  const send = (content, attachments = []) => {
     if (streaming || !user) return;
     if (userProfile?.status === "banned") return;
     if (userPlan === "free" && totalUsageCount >= FREE_CHAT_LIMIT) return;
-    const next = [...messages.filter((m) => !m.pending && !m.error), { role: "user", content, at: time() }];
+    if (userPlan === "free" && attachments.length > freeAttachmentRemaining) return;
+    if (attachments.length && userPlan === "free") {
+      const attachmentUsage = { date: todayKey, count: (uploadUsage.date === todayKey ? Number(uploadUsage.count || 0) : 0) + attachments.length };
+      setUserProfile((current) => ({ ...(current || {}), attachmentUsage }));
+      void update(ref(db, `users/${user.uid}/profile`), { attachmentUsage, updatedAt: Date.now() })
+        .catch((error) => console.warn("Gagal menyimpan batas lampiran:", error.code));
+    }
+    const next = [...messages.filter((m) => !m.pending && !m.error), { role: "user", content, attachments, at: time() }];
     const id = conversationId || push(ref(db, `users/${user.uid}/conversations`)).key;
     setConversationId(id);
     setMessages(next);
@@ -2034,94 +2167,182 @@ function App() {
     {user && <Sidebar chats={chats} activeId={conversationId} onOpen={openChat} onNew={reset} onDelete={removeChat} user={user} isOpen={sidebarOpen} onToggle={() => setSidebarOpen((open) => !open)} onPage={navigateToPage} userPlan={userPlan} t={t} />}
     {user && sidebarOpen && <button className="sidebar-backdrop" aria-label={t.closeSidebar} onClick={() => setSidebarOpen(false)} />}
     <div className="app-main">
-    {user && !sidebarOpen && <span className="header-name"><span>M Putra Ramadhani</span><small>AI INDONESIA</small></span>}
-    {user && page !== "chat" ? (
-      <AccountPage
-        page={page}
-        user={user}
-        userProfile={userProfile}
-        userPlan={userPlan}
-        chatsCount={chats.length}
-        t={t}
-        lang={lang}
-        onLangChange={handleLangChange}
-        userPromo={userPromo}
-        onNavigate={navigateToPage}
-        onSave={async (name) => {
-          const cleanName = (name || "").trim();
-          if (cleanName) {
-            await updateProfile(user, { displayName: cleanName });
-          }
-          const profileRef = ref(db, `users/${user.uid}/profile`);
-          await set(profileRef, {
-            ...(userProfile || {}),
-            uid: user.uid,
-            email: user.email || "",
-            displayName: cleanName || user.displayName || "",
-            plan: userPlan || "free",
-            updatedAt: Date.now(),
-          });
-        }}
-        onPaymentConfirmed={async (orderId, voucherId) => {
-          const profileRef = ref(db, `users/${user.uid}/profile`);
-          await set(profileRef, {
-            ...(userProfile || {}),
-            uid: user.uid,
-            email: user.email || "",
-            displayName: user.displayName || "",
-            plan: "plus",
-            planName: "Plus",
-            paymentOrderId: orderId,
-            usedVouchers: voucherId ? { ...(userProfile?.usedVouchers || {}), [voucherId]: Date.now() } : (userProfile?.usedVouchers || {}),
-            planActivatedAt: Date.now(),
-            updatedAt: Date.now(),
-          });
-          setUserPlan("plus");
-        }}
-      />
-    ) : <>
-    <div className={`topbar ${inChat ? "visible" : ""}`}><div /><button className="new-chat-btn" onClick={reset}>{t.sidebarNew}</button></div>
-    {!inChat && (
-      <div className="landing">
-        <div className="landing-inner">
-          <h1 className="val-mark">{t.appName || "M Putra Ramadhani"}</h1>
-          <p className="val-desc-lead">{t.brandDesc}</p>
-          <div className="suggestions">{(t.suggestions || suggestions).map((suggestion) => <button key={suggestion} className="suggestion-btn" onClick={() => !isLimitReached && send(suggestion)} disabled={isLimitReached}>{suggestion}</button>)}</div>
-          <div className="composer-wrap">
-            <Composer
-              onSend={send}
-              disabled={streaming || isLimitReached}
-              selectedModel={selectedModel}
-              onSelectModel={handleSelectModel}
-              isLimitReached={isLimitReached}
-              userMessageCount={totalUsageCount}
-              freeLimit={FREE_CHAT_LIMIT}
-              userPlan={userPlan}
-              onNew={reset}
-              onUpgrade={() => navigateToPage("upgrade")}
-              t={t}
-            />
+      {user && !sidebarOpen && <span className="header-name"><span>M Putra Ramadhani</span><small>AI INDONESIA</small></span>}
+      {user && page !== "chat" ? (
+        <AccountPage
+          page={page}
+          user={user}
+          userProfile={userProfile}
+          userPlan={userPlan}
+          chatsCount={chats.length}
+          t={t}
+          lang={lang}
+          onLangChange={handleLangChange}
+          userPromo={userPromo}
+          onNavigate={navigateToPage}
+          onSave={async (name) => {
+            const cleanName = (name || "").trim();
+            if (cleanName) {
+              await updateProfile(user, { displayName: cleanName });
+            }
+            const profileRef = ref(db, `users/${user.uid}/profile`);
+            await set(profileRef, {
+              ...(userProfile || {}),
+              uid: user.uid,
+              email: user.email || "",
+              displayName: cleanName || user.displayName || "",
+              plan: userPlan || "free",
+              updatedAt: Date.now(),
+            });
+          }}
+          onPaymentConfirmed={async (orderId, voucherId) => {
+            const profileRef = ref(db, `users/${user.uid}/profile`);
+            await set(profileRef, {
+              ...(userProfile || {}),
+              uid: user.uid,
+              email: user.email || "",
+              displayName: user.displayName || "",
+              plan: "plus",
+              planName: "Plus",
+              paymentOrderId: orderId,
+              usedVouchers: voucherId ? { ...(userProfile?.usedVouchers || {}), [voucherId]: Date.now() } : (userProfile?.usedVouchers || {}),
+              planActivatedAt: Date.now(),
+              planExpiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+              updatedAt: Date.now(),
+            });
+            setUserPlan("plus");
+          }}
+        />
+      ) : <>
+        <div className={`topbar ${inChat ? "visible" : ""}`}><div /><button className="new-chat-btn" onClick={reset}>{t.sidebarNew}</button></div>
+        {!inChat && (
+          <div className="landing">
+            <div className="landing-inner">
+              <h1 className="val-mark">{t.appName || "M Putra Ramadhani"}</h1>
+              <p className="val-desc-lead">{t.brandDesc}</p>
+              <div className="suggestions">{(t.suggestions || suggestions).map((suggestion) => <button key={suggestion} className="suggestion-btn" onClick={() => !isLimitReached && send(suggestion)} disabled={isLimitReached}>{suggestion}</button>)}</div>
+              <div className="composer-wrap">
+                <Composer
+                  onSend={send}
+                  disabled={streaming || isLimitReached}
+                  selectedModel={selectedModel}
+                  onSelectModel={handleSelectModel}
+                  isLimitReached={isLimitReached}
+                  userMessageCount={totalUsageCount}
+                  freeLimit={FREE_CHAT_LIMIT}
+                  userPlan={userPlan}
+                  attachmentRemaining={freeAttachmentRemaining}
+                  onNew={reset}
+                  onUpgrade={() => navigateToPage("upgrade")}
+                  t={t}
+                />
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
-    )}
-    {inChat && <><div className="conversation"><div className="conversation-inner">{messages.map((message, index) => <div className={`msg ${message.role === "user" ? "user" : "val"} ${!message.pending ? "settled" : ""}`} key={`${message.role}-${index}`}><div className="msg-head"><span className="msg-name">{message.role === "user" ? <span className="msg-user-name-wrap"><span>{t.you}</span></span> : <span className="msg-ai-name-wrap"><img src={brandLogo} alt="" className="msg-ai-avatar" /><span>{t.appName}</span></span>}</span></div><div className="msg-body">{message.pending ? <span className="typing-indicator"><span /><span /><span /></span> : message.error ? <div className="error-msg">{message.error}</div> : <ChatMessageBody content={message.content} t={t} />}</div><span className="msg-time msg-time-below">{message.at}</span>{message.role === "assistant" && !message.pending && <Actions text={message.error || message.content} onRegenerate={regenerate} t={t} disabled={isLimitReached} />}</div>)}<div ref={bottom} /></div></div><div className="composer-zone"><div className="composer-wrap">
-      <Composer
-        onSend={send}
-        disabled={streaming || isLimitReached}
-        autoFocus
-        selectedModel={selectedModel}
-        onSelectModel={handleSelectModel}
-        isLimitReached={isLimitReached}
-        userMessageCount={totalUsageCount}
-        freeLimit={FREE_CHAT_LIMIT}
-        userPlan={userPlan}
-        onNew={reset}
-        onUpgrade={() => navigateToPage("upgrade")}
-        t={t}
-      />
-    </div></div></>}
-    </>}
+        )}
+        {inChat && (
+          <>
+            <div className="conversation">
+              <div className="conversation-inner">
+                {messages.map((message, index) => (
+                  <div
+                    className={`msg ${message.role === "user" ? "user" : "val"} ${!message.pending ? "settled" : ""}`}
+                    key={`${message.role}-${index}`}
+                  >
+                    <div className="msg-head">
+                      <span className="msg-name">
+                        {message.role === "user" ? (
+                          <span className="msg-user-name-wrap">
+                            <span>{t.you}</span>
+                          </span>
+                        ) : (
+                          <span className="msg-ai-name-wrap">
+                            <img src={brandLogo} alt="" className="msg-ai-avatar" />
+                            <span>{t.appName}</span>
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                    {/* Standalone Photo/Attachment - Above text bubble without file name */}
+                    {message.attachments && message.attachments.length > 0 && (
+                      <div className="msg-attachments-standalone">
+                        {message.attachments.map((file, fileIdx) => {
+                          const imgSrc = file.dataUrl || file.url || (typeof file === "string" ? file : "");
+                          const isImg = Boolean(
+                            file.isImage ||
+                            (file.type && file.type.startsWith("image/")) ||
+                            (imgSrc && imgSrc.startsWith("data:image/")) ||
+                            /\.(png|jpe?g|webp|gif|bmp|svg|heic|jfif)$/i.test(file.name || "")
+                          );
+                          if (isImg && imgSrc) {
+                            return (
+                              <div
+                                className="msg-standalone-photo-wrap"
+                                key={fileIdx}
+                                onClick={() => setPreviewImage(imgSrc)}
+                                title="Klik untuk memperbesar"
+                              >
+                                <img
+                                  src={imgSrc}
+                                  alt="Foto"
+                                  className="msg-standalone-photo"
+                                />
+                              </div>
+                            );
+                          }
+                          return (
+                            <div className="msg-attachment-file-card" key={fileIdx}>
+                              <span className="attachment-file-icon">{isImg ? "FOTO" : "FILE"}</span>
+                              <span className="msg-attachment-file-name">{file.name || (isImg ? "Foto" : "Lampiran")}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Text bubble - below photo */}
+                    {(message.pending || message.error || (message.content && message.content.trim())) && (
+                      <div className="msg-body">
+                        {message.pending ? (
+                          <span className="typing-indicator"><span /><span /><span /></span>
+                        ) : message.error ? (
+                          <div className="error-msg">{message.error}</div>
+                        ) : (
+                          <ChatMessageBody content={message.content} t={t} />
+                        )}
+                      </div>
+                    )}
+                    <span className="msg-time msg-time-below">{message.at}</span>
+                    {message.role === "assistant" && !message.pending && (
+                      <Actions text={message.error || message.content} onRegenerate={regenerate} t={t} disabled={isLimitReached} />
+                    )}
+                  </div>
+                ))}
+                <div ref={bottom} />
+              </div>
+            </div>
+            <div className="composer-zone">
+              <div className="composer-wrap">
+                <Composer
+                  onSend={send}
+                  disabled={streaming || isLimitReached}
+                  autoFocus
+                  selectedModel={selectedModel}
+                  onSelectModel={handleSelectModel}
+                  isLimitReached={isLimitReached}
+                  userMessageCount={totalUsageCount}
+                  freeLimit={FREE_CHAT_LIMIT}
+                  userPlan={userPlan}
+                  attachmentRemaining={freeAttachmentRemaining}
+                  onNew={reset}
+                  onUpgrade={() => navigateToPage("upgrade")}
+                  t={t}
+                />
+              </div>
+            </div>
+          </>
+        )}
+      </>}
     </div>
     {securityToast && (
       <div className="security-toast" role="alert">
@@ -2131,6 +2352,21 @@ function App() {
           <line x1="12" y1="16" x2="12.01" y2="16" />
         </svg>
         <span>{securityToast}</span>
+      </div>
+    )}
+    {previewImage && (
+      <div className="img-lightbox-overlay" onClick={() => setPreviewImage(null)}>
+        <div className="img-lightbox-content" onClick={(e) => e.stopPropagation()}>
+          <img src={previewImage} alt="Pratinjau Foto" className="img-lightbox-img" />
+          <button
+            type="button"
+            className="img-lightbox-close"
+            onClick={() => setPreviewImage(null)}
+            aria-label="Tutup"
+          >
+            ×
+          </button>
+        </div>
       </div>
     )}
   </div>;
