@@ -11,12 +11,12 @@
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
-    "vite": "latest",
-    "react": "latest",
-    "react-dom": "latest",
     "dotenv": "latest",
     "express": "latest",
-    "firebase": "latest"
-  },
-  "devDependencies": {}
+    "firebase": "latest",
+    "qrcode": "^1.5.4",
+    "react": "latest",
+    "react-dom": "latest",
+    "vite": "latest"
+  }
 }

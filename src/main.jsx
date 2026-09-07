@@ -1030,7 +1030,7 @@ function BannedScreen({ user, userProfile, t, onSignOut }) {
   );
 }
 
-function evaluatePromo(promo, user) {
+function evaluatePromo(promo, user, profile) {
   if (!promo) return { isEligible: false, discountPercent: 0, reason: "no_data", targetType: "none", promo: null };
   const status = String(promo.status || "inactive").toLowerCase();
   const target = String(promo.target || "none").toLowerCase();
@@ -1041,6 +1041,9 @@ function evaluatePromo(promo, user) {
   }
 
   const discountPercent = Number(promo.discountPercent) || 50;
+  if (promo.id && profile?.usedVouchers?.[promo.id]) {
+    return { isEligible: false, discountPercent: 0, reason: "already_used", targetType: target, promo };
+  }
 
   // Jika status aktif dan target all, promo masuk untuk seluruh orang
   if (target === "all") {
@@ -1084,11 +1087,16 @@ function AccountPage({
   onLangChange,
   userPromo,
   onNavigate,
+  onPaymentConfirmed,
 }) {
   const tr = t || getTranslation(lang);
   const [name, setName] = useState(userProfile?.displayName || user.displayName || "");
   const [buying, setBuying] = useState(false);
   const [toast, setToast] = useState(false);
+  const [payment, setPayment] = useState(null);
+  const [paymentChoiceOpen, setPaymentChoiceOpen] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState("qris");
+  const [paymentError, setPaymentError] = useState("");
   const [copiedUid, setCopiedUid] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -1108,6 +1116,11 @@ function AccountPage({
   }).format(finalPrice).replace(/IDR\s?/, "Rp ");
 
   const buttonPromoPriceText = `Rp ${Math.round(finalPrice / 1000)}rb`;
+  const voucherDiscount = isEligible ? Math.round(rawOriginalPrice * discountPercent / 100) : 0;
+  const taxableTotal = rawOriginalPrice - voucherDiscount;
+  const taxAmount = Math.round(taxableTotal * 0.11);
+  const checkoutTotal = taxableTotal + taxAmount;
+  const rupiah = (value) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(value);
 
   useEffect(() => {
     if (userProfile?.displayName) {
@@ -1148,14 +1161,43 @@ function AccountPage({
     }
   };
 
-  const handleBuyPlus = () => {
+  const handleBuyPlus = async (method) => {
+    setPaymentChoiceOpen(false);
     setBuying(true);
-    setToast(true);
-    setTimeout(() => {
-      setToast(false);
+    setPaymentError("");
+    try {
+      const response = await fetch("/api/payments/qris", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ uid: user.uid, email: user.email, name: name || user.displayName, method, voucher: userPromo?.promo?.promoCode || "" }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Gagal membuat tagihan QRIS.");
+      setPayment(data);
+    } catch (error) {
+      setPaymentError(error.message || "Gagal membuat tagihan QRIS.");
+    } finally {
       setBuying(false);
-    }, 4500);
+    }
   };
+
+  useEffect(() => {
+    if (!payment?.orderId || payment.paid) return undefined;
+    let cancelled = false;
+    const checkStatus = async () => {
+      try {
+        const response = await fetch(`/api/payments/${encodeURIComponent(payment.orderId)}`);
+        const data = await response.json();
+        if (!cancelled && data.paid) {
+          setPayment((current) => current ? { ...current, paid: true } : current);
+          onPaymentConfirmed?.(payment.orderId, userPromo?.promo?.id || "");
+        }
+      } catch {}
+    };
+    void checkStatus();
+    const timer = setInterval(checkStatus, 7000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [payment?.orderId, payment?.paid, onPaymentConfirmed, userPromo]);
 
   return (
     <main className="account-page">
@@ -1395,7 +1437,7 @@ function AccountPage({
                     <button
                       type="button"
                       className={`upgrade-primary-btn ${buying ? "buying" : ""}`}
-                      onClick={handleBuyPlus}
+                      onClick={() => setPaymentChoiceOpen(true)}
                     >
                       <span>
                         {buying
@@ -1408,6 +1450,7 @@ function AccountPage({
                     <span className="upgrade-subtext-reassure">
                       Dapat dibatalkan kapan saja. Aktivasi instan ke akun Anda.
                     </span>
+                    {paymentError && <span className="upgrade-payment-error">{paymentError}</span>}
                   </>
                 )}
               </div>
@@ -1416,6 +1459,33 @@ function AccountPage({
             {toast && (
               <div className="upgrade-toast">
                 <span>{tr.toastComingSoon}</span>
+              </div>
+            )}
+            {paymentChoiceOpen && (
+              <div className="payment-overlay" role="dialog" aria-modal="true" aria-label="Checkout">
+                <div className="payment-dialog payment-choice">
+                  <button className="payment-close" onClick={() => setPaymentChoiceOpen(false)} aria-label="Tutup">×</button>
+                  <h2>Checkout Paket Plus</h2>
+                  <div className="checkout-row"><span>Paket Plus / bulan</span><strong>Rp 500.000</strong></div>
+                  {isEligible && <div className="checkout-row discount"><span>Potongan voucher {discountPercent}%</span><strong>− {rupiah(voucherDiscount)}</strong></div>}
+                  <div className="checkout-row"><span>PPN 11%</span><strong>{rupiah(taxAmount)}</strong></div>
+                  {isEligible ? <div className="checkout-voucher-applied"><strong>{userPromo?.promo?.promoCode || "VOUCHER"}</strong><span>Diskon {discountPercent}% otomatis diterapkan. Voucher ini hanya bisa dipakai sekali.</span></div> : <p className="checkout-note">Tidak ada voucher aktif untuk akun ini.</p>}
+                  <div className="checkout-total"><span>Total pembayaran</span><strong>{rupiah(checkoutTotal)}</strong></div>
+                  <div className="checkout-methods"><button className={paymentMethod === "gopay" ? "active" : ""} onClick={() => setPaymentMethod("gopay")}>GoPay</button><button className={paymentMethod === "qris" ? "active" : ""} onClick={() => setPaymentMethod("qris")}>QRIS</button></div>
+                  <button className="payment-method-btn checkout-pay" onClick={() => handleBuyPlus(paymentMethod)}>Lanjut ke transaksi {paymentMethod === "gopay" ? "GoPay" : "QRIS"}</button>
+                </div>
+              </div>
+            )}
+            {payment && (
+              <div className="payment-overlay" role="dialog" aria-modal="true" aria-label="Pembayaran QRIS">
+                <div className="payment-dialog">
+                  <button className="payment-close" onClick={() => setPayment(null)} aria-label="Tutup">×</button>
+                  {payment.paid ? (
+                    <><h2>Pembayaran berhasil</h2><p>Paket Plus sudah aktif untuk akun Anda.</p><button className="settings-save" onClick={() => setPayment(null)}>Selesai</button></>
+                  ) : (
+                    <><h2>{payment.method === "gopay" ? "Bayar dengan GoPay" : "Bayar dengan QRIS"}</h2><p>{payment.method === "gopay" ? "Lanjutkan pembayaran melalui aplikasi GoPay atau scan kode QR." : "Scan QR menggunakan GoPay atau aplikasi QRIS lain."}</p>{payment.qrDataUrl ? <img className="payment-qr" src={payment.qrDataUrl} alt="Kode QR pembayaran Paket Plus" /> : payment.qrUrl ? <img className="payment-qr" src={payment.qrUrl} alt="Kode QR pembayaran Paket Plus" /> : null}{payment.method === "gopay" && payment.deepLink && <a className="payment-gopay-link" href={payment.deepLink}>Buka GoPay</a>}<strong>{new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(payment.breakdown?.total || 0)}</strong><p className="payment-wait">Menunggu pembayaran secara otomatis…</p></>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1601,7 +1671,7 @@ function App() {
     };
   }, []);
 
-  const userPromo = evaluatePromo(promoConfig, user);
+  const userPromo = evaluatePromo(promoConfig, user, userProfile);
 
   const handleUpdatePromo = async (updates) => {
     const promoRef = ref(db, "promos/current");
@@ -1964,6 +2034,22 @@ function App() {
             plan: userPlan || "free",
             updatedAt: Date.now(),
           });
+        }}
+        onPaymentConfirmed={async (orderId, voucherId) => {
+          const profileRef = ref(db, `users/${user.uid}/profile`);
+          await set(profileRef, {
+            ...(userProfile || {}),
+            uid: user.uid,
+            email: user.email || "",
+            displayName: user.displayName || "",
+            plan: "plus",
+            planName: "Plus",
+            paymentOrderId: orderId,
+            usedVouchers: voucherId ? { ...(userProfile?.usedVouchers || {}), [voucherId]: Date.now() } : (userProfile?.usedVouchers || {}),
+            planActivatedAt: Date.now(),
+            updatedAt: Date.now(),
+          });
+          setUserPlan("plus");
         }}
       />
     ) : <>

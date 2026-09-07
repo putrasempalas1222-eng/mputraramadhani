@@ -1552,6 +1552,19 @@
       z-index: 1000;
       animation: msgIn 0.3s var(--ease);
     }
+    .upgrade-payment-error { display: block; margin-top: 10px; color: #d3a48f; font-size: 12px; }
+    .payment-overlay { position: fixed; inset: 0; z-index: 1100; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,.7); backdrop-filter: blur(8px); }
+    .payment-dialog { position: relative; width: min(100%, 380px); padding: 28px; border: 1px solid var(--border-strong); border-radius: 18px; background: var(--surface-raised); box-shadow: 0 24px 80px rgba(0,0,0,.55); text-align: center; }
+    .payment-dialog h2 { margin: 0 0 8px; font-family: var(--serif); font-size: 24px; font-weight: 400; }
+    .payment-dialog p { color: var(--text-dim); font-size: 13px; line-height: 1.5; }
+    .payment-close { position: absolute; top: 10px; right: 12px; border: 0; background: transparent; color: var(--text-dim); font-size: 24px; }
+    .payment-qr { display: block; width: min(100%, 250px); margin: 18px auto 12px; padding: 10px; background: #fff; border-radius: 10px; }
+    .payment-wait { color: var(--accent-bright) !important; }
+    .payment-gopay-link, .payment-method-btn { display: block; width: 100%; margin: 10px 0; padding: 12px; border: 1px solid var(--accent-dim); border-radius: 10px; background: var(--accent-soft); color: var(--accent-bright); font: inherit; font-size: 14px; text-decoration: none; }
+    .payment-method-btn { text-align: left; cursor: pointer; }
+    .payment-method-btn small { display: block; margin-top: 4px; color: var(--text-dim); font-size: 11px; }
+    .checkout-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); color: var(--text-dim); font-size: 13px; text-align: left; }.checkout-row strong { color: var(--text); }.checkout-voucher-applied { display: grid; gap: 4px; margin: 16px 0 4px; padding: 11px; border: 1px solid var(--accent-dim); border-radius: 9px; background: var(--accent-soft); text-align: left; color: var(--accent-bright); font-size: 12px; }.checkout-voucher-applied span { color: var(--text-dim); font-size: 11px; }.checkout-note { font-size: 11px !important; text-align: left; }.checkout-methods { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 16px 0 8px; }.checkout-methods button { border: 1px solid var(--border); border-radius: 9px; padding: 10px; background: transparent; color: var(--text-dim); font: inherit; }.checkout-methods button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-bright); }.checkout-pay { text-align: center; }
+    .checkout-row.discount strong { color: #5edb9c; }.checkout-total { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; padding: 14px 0; border-top: 1px solid var(--accent-dim); color: var(--text); font-size: 14px; }.checkout-total strong { color: var(--accent-bright); font-family: var(--serif); font-size: 20px; }
     .security-toast {
       position: fixed;
       bottom: 24px;
