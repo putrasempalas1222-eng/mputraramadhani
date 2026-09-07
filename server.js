@@ -158,6 +158,17 @@ app.get("/api/payments/:orderId", async (req, res) => {
   }
 });
 
+app.get("/admin*", (req, res) => {
+  const url = req.originalUrl || req.url || "";
+  const [pathname, search] = url.split("?");
+  const searchParams = new URLSearchParams(search || "");
+  const hasKey = pathname.includes("page=031104") || searchParams.get("page") === "031104" || pathname.includes("031104");
+  if (hasKey) {
+    return res.sendFile(path.join(root, "dist", "admin", "index.html"));
+  }
+  return res.redirect("/");
+});
+
 app.use(express.static(path.join(root, "dist")));
 app.get("/{*path}", (_req, res) => res.sendFile(path.join(root, "dist", "index.html")));
 app.listen(process.env.PORT || 3000, () => console.log("M Putra Ramadhani is running on port 3000"));

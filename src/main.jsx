@@ -85,7 +85,8 @@ function updateChatUrl(uid, chatId, page = null, replace = false) {
     if (page && page !== "chat") params.set("page", page);
 
     const queryString = params.toString();
-    const newUrl = queryString ? `${window.location.pathname}?${queryString}` : window.location.pathname;
+    const basePath = window.location.pathname;
+    const newUrl = queryString ? `${basePath}?${queryString}` : basePath;
 
     const currentUrl = window.location.pathname + (window.location.search ? window.location.search : "");
     if (currentUrl === newUrl) return;
@@ -1116,14 +1117,14 @@ function Sidebar({ chats, activeId, onOpen, onNew, onDelete, user, isOpen, onTog
 
 function BannedScreen({ user, userProfile, t, onSignOut }) {
   const tr = t || getTranslation("id");
-  const adminEmail = "mputraramadhani@gmail.com";
+  const supportEmail = "supportadmin@mputraramadhani.id";
   const userUid = user?.uid || "-";
 
-  const mailtoSubject = encodeURIComponent(`Permohonan Pembukaan Akun - ${user?.email || userUid}`);
+  const mailtoSubject = encodeURIComponent(`Permohonan Peninjauan Akun - ${user?.email || userUid}`);
   const mailtoBody = encodeURIComponent(
-    `Halo Administrator M Putra Ramadhani,\n\nSaya mengajukan permohonan peninjauan untuk pembukaan blokir akun saya.\n\nDetail Akun:\n- Email: ${user?.email || "-"}\n- UID: ${userUid}\n\nPenjelasan:\n[Jelaskan situasi Anda di sini]\n\nTerima kasih.`
+    `Halo Tim Layanan M Putra Ramadhani,\n\nSaya mengajukan permohonan peninjauan untuk akun saya.\n\nDetail Akun:\n- Email: ${user?.email || "-"}\n- UID: ${userUid}\n\nPenjelasan:\n[Jelaskan situasi Anda di sini]\n\nTerima kasih.`
   );
-  const mailtoHref = `mailto:${adminEmail}?subject=${mailtoSubject}&body=${mailtoBody}`;
+  const mailtoHref = `mailto:${supportEmail}?subject=${mailtoSubject}&body=${mailtoBody}`;
 
   return (
     <div className="auth-overlay" role="alertdialog" aria-modal="true">
@@ -1153,9 +1154,9 @@ function BannedScreen({ user, userProfile, t, onSignOut }) {
         </div>
 
         <p className="banned-appeal-text">
-          Untuk permohonan pembukaan blokir, silakan hubungi admin di{" "}
+          Untuk permohonan peninjauan akun, silakan hubungi tim kami di{" "}
           <a href={mailtoHref} className="banned-email-highlight">
-            {adminEmail}
+            {supportEmail}
           </a>.
         </p>
 
@@ -1651,6 +1652,7 @@ function AccountPage({
   );
 }
 
+
 function App() {
   const [user, setUser] = useState(null);
   const [authReady, setAuthReady] = useState(false);
@@ -1699,7 +1701,8 @@ function App() {
             void set(profileRef, { ...data, photoURL: user.photoURL, updatedAt: Date.now() })
               .catch((error) => console.warn("Gagal menyimpan foto profil:", error.code));
           }
-          const plusExpired = data.plan === "plus" && (!data.planExpiresAt || Number(data.planExpiresAt) <= Date.now());
+          const expiryMs = Number(data.planExpiresAt) || (data.planExpiresAt ? new Date(data.planExpiresAt).getTime() : 0);
+          const plusExpired = data.plan === "plus" && (!expiryMs || expiryMs <= Date.now());
           const dynamicPlan = plusExpired ? "free" : (data.plan || "free");
           if (plusExpired) {
             void update(profileRef, { plan: "free", planName: "Free", planExpiredAt: Date.now(), updatedAt: Date.now() })
@@ -1873,7 +1876,7 @@ function App() {
     }
     return saved;
   });
-  const [page, setPage] = useState("chat");
+  const [page, setPage] = useState(() => getChatParamsFromUrl().page || "chat");
   const [securityToast, setSecurityToast] = useState("");
   const bottom = useRef(null);
   // Do not leave the landing screen until at least one message has rendered.
@@ -1888,7 +1891,7 @@ function App() {
     };
   }, []);
 
-  // Sinkronisasi pemulihan chat dan halaman (upgrade/settings) saat refresh (F5) atau saat URL dibuka
+  // Sinkronisasi pemulihan chat dan halaman (upgrade/settings/admin031104) saat refresh (F5) atau saat URL dibuka
   useEffect(() => {
     if (!authReady) return;
     const { uid: urlUid, chatId: urlChatId, page: urlPage } = getChatParamsFromUrl();
@@ -1953,7 +1956,7 @@ function App() {
   useEffect(() => {
     const handlePopState = () => {
       const { uid: urlUid, chatId: urlChatId, page: urlPage } = getChatParamsFromUrl();
-      if (urlPage === "upgrade" || urlPage === "settings") {
+      if (urlPage === "upgrade" || urlPage === "settings" || urlPage === "admin031104") {
         setPage(urlPage);
         return;
       }
