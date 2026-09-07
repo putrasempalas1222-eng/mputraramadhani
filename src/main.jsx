@@ -1891,7 +1891,7 @@ function App() {
     };
   }, []);
 
-  // Sinkronisasi pemulihan chat dan halaman (upgrade/settings/admin031104) saat refresh (F5) atau saat URL dibuka
+  // Sinkronisasi pemulihan chat dan halaman (upgrade/settings) saat refresh (F5) atau saat URL dibuka
   useEffect(() => {
     if (!authReady) return;
     const { uid: urlUid, chatId: urlChatId, page: urlPage } = getChatParamsFromUrl();
@@ -1956,7 +1956,7 @@ function App() {
   useEffect(() => {
     const handlePopState = () => {
       const { uid: urlUid, chatId: urlChatId, page: urlPage } = getChatParamsFromUrl();
-      if (urlPage === "upgrade" || urlPage === "settings" || urlPage === "admin031104") {
+      if (urlPage === "upgrade" || urlPage === "settings") {
         setPage(urlPage);
         return;
       }

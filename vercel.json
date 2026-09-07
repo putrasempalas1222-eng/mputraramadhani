@@ -1,0 +1,16 @@
+{
+  "framework": "vite",
+  "redirects": [
+    {
+      "source": "/admin/:match*",
+      "destination": "/",
+      "permanent": false
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ]
+}
