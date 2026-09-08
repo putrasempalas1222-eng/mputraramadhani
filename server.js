@@ -44,8 +44,23 @@ const CEOWEB3_REFERENCE_MODELS = {
 };
 async function paymentBreakdown(voucher, uid) {
   let promo = null;
+  let issuedVoucher = null;
+  const requested = String(voucher || "").trim().toUpperCase();
+  const databaseUrl = (process.env.FIREBASE_DATABASE_URL || process.env.VITE_FIREBASE_DATABASE_URL || "").replace(/\/$/, "");
+  if (requested && databaseUrl) {
+    try {
+      const response = await fetch(`${databaseUrl}/vouchers/${encodeURIComponent(requested)}.json`);
+      if (response.ok) issuedVoucher = await response.json();
+    } catch {}
+  }
+  if (issuedVoucher) {
+    const valid = issuedVoucher.status === "active" &&
+      (!issuedVoucher.expiresAt || Number(issuedVoucher.expiresAt) > Date.now()) &&
+      (!issuedVoucher.targetUid || issuedVoucher.targetUid === uid);
+    if (!valid) return { voucherError: "Voucher tidak aktif, kedaluwarsa, atau bukan untuk akun ini." };
+    if (issuedVoucher.type !== "discount") return { voucherError: "Voucher ini bukan voucher diskon pembayaran." };
+  }
   try {
-    const databaseUrl = (process.env.FIREBASE_DATABASE_URL || process.env.VITE_FIREBASE_DATABASE_URL || "").replace(/\/$/, "");
     if (databaseUrl) {
       const response = await fetch(`${databaseUrl}/promos/current.json`);
       if (response.ok) promo = await response.json();
@@ -56,14 +71,15 @@ async function paymentBreakdown(voucher, uid) {
   const code = String(promo?.status || "").toLowerCase() === "active" && allowed
     ? String(promo?.promoCode || "").trim().toUpperCase()
     : (process.env.MIDTRANS_VOUCHER_CODE || "").trim().toUpperCase();
-  const requested = String(voucher || "").trim().toUpperCase();
-  const discountPercent = code && requested === code
-    ? Number(promo?.discountPercent ?? process.env.MIDTRANS_VOUCHER_DISCOUNT_PERCENT ?? 0)
+  const discountPercent = issuedVoucher
+    ? Number(issuedVoucher.discountPercent) || 0
+    : code && requested === code
+      ? Number(promo?.discountPercent ?? process.env.MIDTRANS_VOUCHER_DISCOUNT_PERCENT ?? 0)
     : 0;
   const discount = Math.round(PLUS_PRICE * Math.max(0, Math.min(100, discountPercent)) / 100);
   const taxableAmount = PLUS_PRICE - discount;
   const tax = Math.round(taxableAmount * 0.11);
-  return { subtotal: PLUS_PRICE, discount, tax, total: taxableAmount + tax, voucherApplied: discount > 0 };
+  return { subtotal: PLUS_PRICE, discount, tax, total: taxableAmount + tax, voucherApplied: discount > 0, voucherId: issuedVoucher?.id || (discount > 0 ? code : null) };
 }
 
 function midtransHeaders() {
@@ -171,6 +187,7 @@ app.post("/api/payments/qris", async (req, res) => {
   if (!uid || typeof uid !== "string") return res.status(400).json({ error: "Sesi pengguna tidak valid." });
   const paymentType = method === "gopay" ? "gopay" : "qris";
   const breakdown = await paymentBreakdown(voucher, uid);
+  if (breakdown.voucherError) return res.status(400).json({ error: breakdown.voucherError });
 
   const orderId = `MPRAI-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   try {

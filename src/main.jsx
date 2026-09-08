@@ -1295,6 +1295,7 @@ function Sidebar({ chats, activeId, onOpen, onNew, onDelete, user, isOpen, onTog
             <div className="account-menu">
               <button onClick={() => { onPage("settings"); setMenuOpen(false); }}>{tr.settingsMenu}</button>
               <button onClick={() => { onPage("upgrade"); setMenuOpen(false); }}>{tr.upgradeMenu}</button>
+              <button onClick={() => { onPage("vouchers"); setMenuOpen(false); }}>{tr.voucherMenu || "Voucher"}</button>
               <button className="logout" onClick={() => { updateChatUrl(null, null, true); signOut(auth); }}>{tr.logoutMenu}</button>
             </div>
           )}
@@ -1480,12 +1481,33 @@ function VoiceMode({
   const exchangesRef = useRef(exchanges);
   const pausedPrevStatusRef = useRef("listening");
 
+  const stopVoiceCapture = () => {
+    loopRef.current = false;
+    clearTimeout(silenceRef.current);
+    silenceRef.current = null;
+    finalRef.current = "";
+    interimRef.current = "";
+    setInterim("");
+    try { recogRef.current?.abort?.(); } catch {}
+    try { recogRef.current?.stop?.(); } catch {}
+  };
+
   const sttSupported = typeof window !== "undefined" && ("webkitSpeechRecognition" in window || "SpeechRecognition" in window);
   const ttsSupported = typeof window !== "undefined" && "speechSynthesis" in window;
 
   useEffect(() => { statusRef.current = status; }, [status]);
   useEffect(() => { mutedRef.current = muted; }, [muted]);
   useEffect(() => { exchangesRef.current = exchanges; }, [exchanges]);
+  useEffect(() => {
+    if (!isVoiceLimitReached) return;
+    stopVoiceCapture();
+    if (audioRef.current) {
+      try { audioRef.current.pause(); } catch {}
+      audioRef.current = null;
+    }
+    try { window.speechSynthesis?.cancel(); } catch {}
+    setStatus("idle");
+  }, [isVoiceLimitReached]);
   // Perbarui commitSpeech setiap render agar closure (onSend, dll) selalu yang terbaru
   useEffect(() => { commitRef.current = commitSpeech; });
   useEffect(() => () => {
@@ -1494,7 +1516,6 @@ function VoiceMode({
     try { recogRef.current?.abort?.(); } catch {}
     if (audioRef.current) {
       try { audioRef.current.pause(); } catch {}
-      audioRef.current = null;
     }
     try { window.speechSynthesis?.cancel(); } catch {}
   }, []);
@@ -1552,6 +1573,7 @@ function VoiceMode({
   };
 
   const startListening = () => {
+    if (isVoiceLimitReached) return;
     setStatus("listening");
     loopRef.current = true;
     try { getRecognition().start(); } catch {}
@@ -1594,7 +1616,6 @@ function VoiceMode({
     const handleDone = () => {
       if (finished) return;
       finished = true;
-      audioRef.current = null;
       onDone?.();
     };
 
@@ -1661,7 +1682,7 @@ function VoiceMode({
 
   const begin = () => {
     if (isVoiceLimitReached) {
-      onUpgrade?.();
+      stopVoiceCapture();
       return;
     }
     if (!sttSupported) { setErrorKind("unsupported"); setStatus("error"); return; }
@@ -1675,7 +1696,8 @@ function VoiceMode({
     const text = `${finalRef.current}${interimRef.current}`.trim();
     if (!text || statusRef.current !== "listening") return;
     if (isVoiceLimitReached) {
-      onUpgrade?.();
+      stopVoiceCapture();
+      setStatus("idle");
       return;
     }
     finalRef.current = "";
@@ -2006,6 +2028,10 @@ function AccountPage({
   lang = "id",
   onLangChange,
   userPromo,
+  claimedVouchers = {},
+  onClaimVoucher,
+  onRedeemFreeVoucher,
+  onVoucherUsed,
   onNavigate,
   onPaymentConfirmed,
 }) {
@@ -2020,9 +2046,18 @@ function AccountPage({
   const [copiedUid, setCopiedUid] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [voucherInput, setVoucherInput] = useState("");
+  const [selectedVoucherId, setSelectedVoucherId] = useState("");
+  const [voucherMessage, setVoucherMessage] = useState("");
 
-  const isEligible = Boolean(userPromo?.isEligible);
-  const discountPercent = isEligible ? (userPromo.discountPercent || 50) : 0;
+  const claimedVoucherList = Object.values(claimedVouchers || {}).filter((voucher) => voucher?.status !== "used");
+  const selectedVoucher = claimedVoucherList.find((voucher) => voucher.id === selectedVoucherId)
+    || claimedVoucherList.find((voucher) => voucher.type === "discount")
+    || null;
+  const isEligible = selectedVoucher?.type === "discount" || Boolean(userPromo?.isEligible && !selectedVoucher);
+  const discountPercent = selectedVoucher?.type === "discount"
+    ? Number(selectedVoucher.discountPercent) || 0
+    : (isEligible ? (userPromo.discountPercent || 50) : 0);
 
   const rawOriginalPrice = 500000;
   const finalPrice = discountPercent > 0
@@ -2041,6 +2076,9 @@ function AccountPage({
   const taxAmount = Math.round(taxableTotal * 0.11);
   const checkoutTotal = taxableTotal + taxAmount;
   const rupiah = (value) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(value);
+  const purchaseHistory = Object.values(userProfile?.purchaseHistory || {})
+    .filter((entry) => entry && entry.status !== "cancelled")
+    .sort((a, b) => Number(b.date || 0) - Number(a.date || 0));
 
   useEffect(() => {
     if (userProfile?.displayName) {
@@ -2089,7 +2127,7 @@ function AccountPage({
       const response = await fetch("/api/payments/qris", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uid: user.uid, email: user.email, name: name || user.displayName, method, voucher: userPromo?.promo?.promoCode || "" }),
+        body: JSON.stringify({ uid: user.uid, email: user.email, name: name || user.displayName, method, voucher: selectedVoucher?.code || userPromo?.promo?.promoCode || "" }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Gagal membuat tagihan QRIS.");
@@ -2110,14 +2148,20 @@ function AccountPage({
         const data = await response.json();
         if (!cancelled && data.paid) {
           setPayment((current) => current ? { ...current, paid: true } : current);
-          onPaymentConfirmed?.(payment.orderId, userPromo?.promo?.id || "");
+          onPaymentConfirmed?.(
+            payment.orderId,
+            userPromo?.promo?.id || "",
+            payment.breakdown?.total || 0,
+            payment.transactionId || "",
+            selectedVoucher?.code || userPromo?.promo?.promoCode || ""
+          );
         }
       } catch { }
     };
     void checkStatus();
     const timer = setInterval(checkStatus, 7000);
     return () => { cancelled = true; clearInterval(timer); };
-  }, [payment?.orderId, payment?.paid, onPaymentConfirmed, userPromo]);
+  }, [payment?.orderId, payment?.paid, onPaymentConfirmed, userPromo, selectedVoucher]);
 
   return (
     <main className="account-page">
@@ -2137,6 +2181,13 @@ function AccountPage({
             onClick={() => onNavigate?.("upgrade")}
           >
             {tr.upgradeTitle || "Langganan"}
+          </button>
+          <button
+            type="button"
+            className="account-tab-btn"
+            onClick={() => onNavigate?.("vouchers")}
+          >
+            {tr.voucherMenu || "Voucher"}
           </button>
         </nav>
 
@@ -2225,6 +2276,27 @@ function AccountPage({
                     {lang === "id" ? "Aktif" : "Active"}
                   </span>
                 )}
+              </div>
+            </div>
+
+            <div className="profile-row">
+              <span className="profile-label">{tr.purchaseHistoryTitle || "Riwayat Pembelian dan Upgrade"}</span>
+              <div className="purchase-history-list">
+                {purchaseHistory.length === 0 ? (
+                  <p className="purchase-history-empty">{tr.purchaseHistoryEmpty || "Belum ada riwayat pembelian."}</p>
+                ) : purchaseHistory.map((entry) => (
+                  <div className="purchase-history-item" key={entry.id || entry.paymentId}>
+                    <div className="purchase-history-main">
+                      <strong>{entry.type === "admin" ? (tr.purchaseTypeAdmin || "Pemberian Plus oleh Admin") : entry.type === "voucher_claim" ? (tr.voucherMenu || "Voucher") : (tr.purchaseTypePurchase || "Pembelian Plus")}</strong>
+                      <span className="purchase-history-status">{entry.status === "claimed" ? (tr.purchaseClaimed || "Diklaim") : entry.type === "voucher_claim" ? (tr.purchaseUsed || "Terpakai") : (tr.purchaseSuccess || "Berhasil")}</span>
+                    </div>
+                    <div className="purchase-history-meta">
+                      <span>{tr.purchasePrice || "Harga"}: {entry.amount > 0 ? rupiah(entry.amount) : (entry.type === "admin" ? (tr.purchaseAdminLabel || "Admin") : (tr.purchasePriceUnknown || "Tidak tercatat"))}</span>
+                      <span>{tr.purchaseDate || "Tanggal"}: {formatDate(entry.date)}</span>
+                    </div>
+                    <code className="purchase-history-id">{tr.purchaseId || "ID Pembayaran / Admin"}: {entry.type === "admin" ? (entry.adminId || entry.id) : (entry.paymentId || entry.orderId || entry.id || "-")}</code>
+                  </div>
+                ))}
               </div>
             </div>
 
@@ -2359,6 +2431,26 @@ function AccountPage({
                     {lang === "id" ? "Komputasi respons tercepat setiap saat dan akses pertama ke fitur terbaru." : "Fastest response computation at all times and priority access to new features."}
                   </p>
                 </div>
+
+                <div className="upgrade-pillar-card">
+                  <div className="upgrade-pillar-title">
+                    <span className="upgrade-pillar-dot" />
+                    <span>{tr.plusF7}</span>
+                  </div>
+                  <p className="upgrade-pillar-text">
+                    {lang === "id" ? "Nikmati obrolan suara tanpa batas selama paket Plus aktif." : "Enjoy unlimited voice conversations while your Plus plan is active."}
+                  </p>
+                </div>
+
+                <div className="upgrade-pillar-card">
+                  <div className="upgrade-pillar-title">
+                    <span className="upgrade-pillar-dot" />
+                    <span>{tr.plusF8}</span>
+                  </div>
+                  <p className="upgrade-pillar-text">
+                    {lang === "id" ? "Gunakan API key untuk agents hingga 10 jam per hari, dengan reset batas setiap hari selama Plus aktif." : "Use an API key for agents for up to 10 hours per day, with a daily limit reset while Plus is active."}
+                  </p>
+                </div>
               </div>
 
               {/* Action Zone */}
@@ -2436,6 +2528,63 @@ function AccountPage({
 }
 
 
+function VoucherPage({ t, lang = "id", claimedVouchers = {}, onClaimVoucher, onRedeemFreeVoucher, onNavigate }) {
+  const [code, setCode] = useState("");
+  const [message, setMessage] = useState("");
+  const [claimedNotice, setClaimedNotice] = useState(null);
+  const vouchers = Object.values(claimedVouchers || {}).filter((voucher) => voucher?.status !== "used");
+  return (
+    <main className="account-page">
+      <section className="account-card voucher-page-card">
+        <nav className="account-tabs" aria-label="Account Navigation">
+          <button type="button" className="account-tab-btn" onClick={() => onNavigate?.("settings")}>{t.settingsTitle || "Profil"}</button>
+          <button type="button" className="account-tab-btn" onClick={() => onNavigate?.("upgrade")}>{t.upgradeTitle || "Langganan"}</button>
+          <button type="button" className="account-tab-btn active">{t.voucherMenu || "Voucher"}</button>
+        </nav>
+        <div className="voucher-page-content">
+          <h1 className="profile-display-name">{t.voucherPageTitle || "Voucher Anda"}</h1>
+          <p className="profile-email-sub">{t.voucherPageDesc || "Klaim voucher hadiah dan gunakan saat membeli Paket Plus."}</p>
+          <div className="voucher-page-claim">
+            <input className="auth-input" value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder={lang === "id" ? "Kode voucher" : "Voucher code"} />
+            <button type="button" className="profile-save-btn" onClick={async () => { const result = await onClaimVoucher?.(code); setMessage(result?.message || ""); if (result?.ok) { setCode(""); setClaimedNotice({ code: code.trim().toUpperCase(), type: result.type || "discount" }); } }}>{lang === "id" ? "Klaim" : "Claim"}</button>
+          </div>
+          {message && <p className="voucher-claim-message">{message}</p>}
+          <div className="voucher-page-list">
+            {vouchers.length === 0 ? <p className="purchase-history-empty">{t.voucherPageEmpty || "Belum ada voucher yang diklaim."}</p> : vouchers.map((voucher) => (
+              <article className="voucher-page-item" key={voucher.id}>
+                <div>
+                  <strong>{voucher.code}</strong>
+                  <p>{voucher.type === "free_plus" ? `${lang === "id" ? "Plus gratis" : "Free Plus"} ${voucher.durationDays} ${lang === "id" ? "hari" : "days"}` : `${voucher.discountPercent}% ${lang === "id" ? "diskon" : "discount"}`}</p>
+                </div>
+                {voucher.type === "free_plus" && <button type="button" className="profile-save-btn" onClick={async () => { const result = await onRedeemFreeVoucher?.(voucher); setMessage(result?.message || ""); }}>{lang === "id" ? "Aktifkan" : "Activate"}</button>}
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+      {claimedNotice && (
+        <div className="voucher-success-overlay" role="dialog" aria-modal="true" aria-label={lang === "id" ? "Voucher berhasil diklaim" : "Voucher claimed successfully"}>
+          <div className="voucher-success-modal">
+            <div className="voucher-confetti" aria-hidden="true">{Array.from({ length: 10 }, (_, index) => <span key={index} />)}</div>
+            <div className="voucher-success-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12 4 4L19 6" /></svg>
+            </div>
+            <span className="voucher-success-eyebrow">{lang === "id" ? "VOUCHER TERSIMPAN" : "VOUCHER SAVED"}</span>
+            <h2>{lang === "id" ? "Selamat, voucher berhasil diklaim" : "Your voucher was claimed"}</h2>
+            <p>{lang === "id" ? "Voucher sudah tersimpan di akun Anda dan siap digunakan saat checkout Paket Plus." : "The voucher is saved to your account and ready to use at Plus checkout."}</p>
+            <div className="voucher-success-code">
+              <span>{lang === "id" ? "Kode voucher" : "Voucher code"}</span>
+              <code>{claimedNotice.code}</code>
+            </div>
+            <button type="button" className="profile-save-btn" onClick={() => setClaimedNotice(null)}>{lang === "id" ? "Lihat Voucher" : "View Voucher"}</button>
+            <button type="button" className="voucher-success-close" onClick={() => setClaimedNotice(null)}>{lang === "id" ? "Tutup" : "Close"}</button>
+          </div>
+        </div>
+      )}
+    </main>
+  );
+}
+
 function App() {
   const [user, setUser] = useState(null);
   const [authReady, setAuthReady] = useState(false);
@@ -2477,6 +2626,7 @@ function App() {
   }, [lang, t]);
 
   const [userProfile, setUserProfile] = useState(null);
+  const [profileReady, setProfileReady] = useState(false);
   const [userPlan, setUserPlan] = useState(() => {
     try {
       return localStorage.getItem("val_ai_user_plan") || "free";
@@ -2489,10 +2639,12 @@ function App() {
   useEffect(() => {
     if (!user) {
       setUserProfile(null);
+      setProfileReady(false);
       setUserPlan("free");
       return;
     }
 
+    setProfileReady(false);
     const profileRef = ref(db, `users/${user.uid}/profile`);
 
     const unsubscribe = onValue(
@@ -2517,6 +2669,7 @@ function App() {
           try {
             localStorage.setItem("val_ai_user_plan", dynamicPlan);
           } catch { }
+          setProfileReady(true);
         } else {
           // Inisialisasi data profil pengguna pertama kali ke database
           const initialProfile = {
@@ -2538,20 +2691,34 @@ function App() {
             setUserProfile(initialProfile);
             setUserPlan("free");
             localStorage.setItem("val_ai_user_plan", "free");
+            setProfileReady(true);
           } catch (err) {
             console.warn("Gagal inisialisasi profil ke database:", err);
             setUserProfile(initialProfile);
+            setProfileReady(true);
           }
         }
       },
       (err) => {
         console.warn("Gagal mendengarkan database profil:", err);
+        setProfileReady(true);
       }
     );
 
     return () => {
       if (typeof unsubscribe === "function") unsubscribe();
     };
+  }, [user]);
+
+  const [claimedVouchers, setClaimedVouchers] = useState({});
+  useEffect(() => {
+    if (!user) {
+      setClaimedVouchers({});
+      return undefined;
+    }
+    return onValue(ref(db, `users/${user.uid}/claimedVouchers`), (snapshot) => {
+      setClaimedVouchers(snapshot.exists() ? (snapshot.val() || {}) : {});
+    }, (err) => console.warn("Gagal memuat voucher pengguna:", err));
   }, [user]);
 
   const [promoConfig, setPromoConfig] = useState(null);
@@ -2648,6 +2815,99 @@ function App() {
 
   const userPromo = evaluatePromo(promoConfig, user, userProfile);
 
+  const claimVoucher = async (rawCode) => {
+    const code = String(rawCode || "").trim().toUpperCase();
+    if (!user || !code) return { ok: false, message: lang === "id" ? "Masukkan kode voucher." : "Enter a voucher code." };
+    try {
+      const voucherSnapshot = await get(ref(db, `vouchers/${code}`));
+      if (!voucherSnapshot.exists()) return { ok: false, message: lang === "id" ? "Voucher tidak ditemukan." : "Voucher not found." };
+      const voucher = voucherSnapshot.val() || {};
+      if (voucher.status !== "active" || (voucher.expiresAt && Number(voucher.expiresAt) <= Date.now())) {
+        return { ok: false, message: lang === "id" ? "Voucher sudah tidak aktif atau kedaluwarsa." : "This voucher is inactive or expired." };
+      }
+      if (Number(voucher.maxUses) > 0 && Number(voucher.usedCount || 0) >= Number(voucher.maxUses)) {
+        return { ok: false, message: lang === "id" ? "Batas pengguna voucher sudah tercapai." : "This voucher has reached its user limit." };
+      }
+      if (voucher.targetUid && voucher.targetUid !== user.uid) {
+        return { ok: false, message: lang === "id" ? "Voucher ini bukan untuk akun Anda." : "This voucher is not assigned to your account." };
+      }
+      const alreadyUsed = Object.values(userProfile?.purchaseHistory || {}).some((entry) =>
+        entry?.voucherCode === code && (entry.status === "used" || entry.status === "success")
+      );
+      if (alreadyUsed) {
+        return { ok: false, message: lang === "id" ? "Voucher ini sudah pernah digunakan di akun Anda." : "This voucher has already been used on your account." };
+      }
+      if (claimedVouchers[code]) return { ok: false, message: lang === "id" ? "Voucher sudah diklaim." : "Voucher already claimed." };
+      const claimedAt = Date.now();
+      const historyId = `voucher-claim-${code}-${claimedAt}`;
+      await set(ref(db, `users/${user.uid}/claimedVouchers/${code}`), { ...voucher, id: code, status: "claimed", claimedAt });
+      await update(ref(db, `users/${user.uid}/profile`), {
+        [`purchaseHistory/${historyId}`]: { id: historyId, type: "voucher_claim", status: "claimed", amount: 0, date: claimedAt, paymentId: code, voucherCode: code },
+      });
+      return { ok: true, message: lang === "id" ? "Voucher berhasil diklaim." : "Voucher claimed successfully." };
+    } catch (error) {
+      return { ok: false, message: error.message || (lang === "id" ? "Voucher gagal diklaim." : "Could not claim voucher.") };
+    }
+  };
+
+  const consumeVoucher = async (code) => {
+    if (!user || !code) return;
+    const usedAt = Date.now();
+    const historyUpdates = {};
+    Object.values(userProfile?.purchaseHistory || {}).forEach((entry) => {
+      if (entry?.voucherCode === code && entry.status === "claimed") {
+        historyUpdates[`purchaseHistory/${entry.id}/status`] = "used";
+        historyUpdates[`purchaseHistory/${entry.id}/usedAt`] = usedAt;
+      }
+    });
+    const voucherSnapshot = await get(ref(db, `vouchers/${code}`));
+    const voucher = voucherSnapshot.exists() ? voucherSnapshot.val() : null;
+    const nextUsedCount = Number(voucher?.usedCount || 0) + 1;
+    const maxUses = Number(voucher?.maxUses || 1);
+    const voucherUpdate = voucher && nextUsedCount < maxUses
+      ? update(ref(db, `vouchers/${code}`), { usedCount: nextUsedCount, updatedAt: usedAt })
+      : remove(ref(db, `vouchers/${code}`));
+    await Promise.all([
+      remove(ref(db, `users/${user.uid}/claimedVouchers/${code}`)),
+      voucherUpdate,
+      Object.keys(historyUpdates).length ? update(ref(db, `users/${user.uid}/profile`), historyUpdates) : Promise.resolve(),
+    ]);
+  };
+
+  const redeemFreeVoucher = async (voucher) => {
+    if (!user || !voucher?.code) return { ok: false, message: "Voucher tidak valid." };
+    if (userPlan === "plus") {
+      return { ok: false, message: lang === "id" ? "Paket Plus Anda masih aktif. Voucher gratis belum dapat digunakan." : "Your Plus plan is still active. This free voucher cannot be used yet." };
+    }
+    if (voucher.expiresAt && Number(voucher.expiresAt) <= Date.now()) return { ok: false, message: "Voucher sudah kedaluwarsa." };
+    const voucherSnapshot = await get(ref(db, `vouchers/${voucher.code}`));
+    if (!voucherSnapshot.exists()) return { ok: false, message: lang === "id" ? "Voucher sudah tidak tersedia." : "This voucher is no longer available." };
+    const latestVoucher = voucherSnapshot.val() || {};
+    if (latestVoucher.status !== "active" || (latestVoucher.expiresAt && Number(latestVoucher.expiresAt) <= Date.now())) {
+      return { ok: false, message: lang === "id" ? "Voucher sudah kedaluwarsa atau tidak aktif." : "This voucher is expired or inactive." };
+    }
+    if (Number(latestVoucher.maxUses) > 0 && Number(latestVoucher.usedCount || 0) >= Number(latestVoucher.maxUses)) {
+      return { ok: false, message: lang === "id" ? "Batas pengguna voucher sudah tercapai." : "This voucher has reached its user limit." };
+    }
+    const activatedAt = Date.now();
+    const historyId = `voucher-plus-${voucher.code}-${activatedAt}`;
+    try {
+      await update(ref(db, `users/${user.uid}/profile`), {
+        plan: "plus",
+        planName: "Plus",
+        planActivatedAt: activatedAt,
+        planExpiresAt: activatedAt + Math.max(1, Number(voucher.durationDays) || 30) * 24 * 60 * 60 * 1000,
+        [`purchaseHistory/${historyId}`]: { id: historyId, type: "admin", source: "voucher", status: "success", amount: 0, date: activatedAt, adminId: voucher.createdBy || "admin", paymentId: voucher.code, voucherCode: voucher.code },
+        updatedAt: activatedAt,
+      });
+      await consumeVoucher(voucher.code);
+      setUserPlan("plus");
+      return { ok: true, message: lang === "id" ? "Paket Plus berhasil diaktifkan." : "Plus plan activated successfully." };
+    } catch (error) {
+      return { ok: false, message: error.message || "Voucher gagal digunakan." };
+    }
+  };
+
   const handleUpdatePromo = async (updates) => {
     const promoRef = ref(db, "promos/current");
     const merged = {
@@ -2705,8 +2965,8 @@ function App() {
     if (!authReady) return;
     const { uid: urlUid, chatId: urlChatId, page: urlPage } = getChatParamsFromUrl();
 
-    // Jika URL mengarah ke halaman upgrade atau settings, tetap di halaman tersebut
-    if (urlPage === "upgrade" || urlPage === "settings") {
+    // Jika URL mengarah ke halaman yang berdiri sendiri, pertahankan halamannya saat refresh.
+    if (urlPage === "upgrade" || urlPage === "settings" || urlPage === "voice" || urlPage === "vouchers") {
       setPage(urlPage);
       if (user) {
         if (urlUid && urlUid !== user.uid) {
@@ -2715,6 +2975,17 @@ function App() {
           updateChatUrl(user.uid, urlChatId, urlPage, true);
         } else {
           updateChatUrl(user.uid, urlChatId, urlPage, true);
+        }
+      }
+      if (urlPage === "voice" && user && urlUid === user.uid) {
+        setConversationId(urlChatId);
+        if (urlChatId) {
+          get(ref(db, `users/${user.uid}/conversations/${urlChatId}`)).then((snapshot) => {
+            if (!snapshot.exists()) return;
+            const chatData = snapshot.val();
+            setMessages(chatData.messages || []);
+            setRegenCount(chatData.regenCount || 0);
+          }).catch(() => {});
         }
       }
       return;
@@ -2765,8 +3036,9 @@ function App() {
   useEffect(() => {
     const handlePopState = () => {
       const { uid: urlUid, chatId: urlChatId, page: urlPage } = getChatParamsFromUrl();
-      if (urlPage === "upgrade" || urlPage === "settings") {
+      if (urlPage === "upgrade" || urlPage === "settings" || urlPage === "voice" || urlPage === "vouchers") {
         setPage(urlPage);
+        if (urlPage === "voice") setConversationId(urlChatId);
         return;
       }
       if (!urlChatId || !user) {
@@ -3173,16 +3445,33 @@ function App() {
     <div className="app-main">
       {user && !sidebarOpen && <span className="header-name"><span>M Putra Ramadhani</span><small>AI INDONESIA</small></span>}
       {user && page === "voice" ? (
-        <VoiceMode
+        profileReady ? (
+          <VoiceMode
+            t={t}
+            lang={lang}
+            onExit={reset}
+            onSend={sendVoiceMessage}
+            userPlan={userPlan}
+            remainingVoiceCount={remainingVoiceCount}
+            freeVoiceLimit={FREE_VOICE_LIMIT}
+            isVoiceLimitReached={isVoiceLimitReached}
+            onUpgrade={() => navigateToPage("upgrade")}
+          />
+        ) : (
+          <div className="voice-page" aria-busy="true">
+            <div className="voice-stage">
+              <span className="typing-indicator"><span /><span /><span /></span>
+            </div>
+          </div>
+        )
+      ) : user && page === "vouchers" ? (
+        <VoucherPage
           t={t}
           lang={lang}
-          onExit={reset}
-          onSend={sendVoiceMessage}
-          userPlan={userPlan}
-          remainingVoiceCount={remainingVoiceCount}
-          freeVoiceLimit={FREE_VOICE_LIMIT}
-          isVoiceLimitReached={isVoiceLimitReached}
-          onUpgrade={() => navigateToPage("upgrade")}
+          claimedVouchers={claimedVouchers}
+          onClaimVoucher={claimVoucher}
+          onRedeemFreeVoucher={redeemFreeVoucher}
+          onNavigate={navigateToPage}
         />
       ) : user && page !== "chat" ? (
         <AccountPage
@@ -3195,6 +3484,10 @@ function App() {
           lang={lang}
           onLangChange={handleLangChange}
           userPromo={userPromo}
+          claimedVouchers={claimedVouchers}
+          onClaimVoucher={claimVoucher}
+          onRedeemFreeVoucher={redeemFreeVoucher}
+          onVoucherUsed={consumeVoucher}
           onNavigate={navigateToPage}
           onSave={async (name) => {
             const cleanName = (name || "").trim();
@@ -3211,8 +3504,23 @@ function App() {
               updatedAt: Date.now(),
             });
           }}
-          onPaymentConfirmed={async (orderId, voucherId) => {
+          onPaymentConfirmed={async (orderId, voucherId, amount, transactionId, voucherCode) => {
             const profileRef = ref(db, `users/${user.uid}/profile`);
+            const purchaseDate = Date.now();
+            const purchaseId = `purchase-${orderId}`;
+            const purchaseHistory = {
+              ...(userProfile?.purchaseHistory || {}),
+              [purchaseId]: {
+                id: purchaseId,
+                type: "purchase",
+                status: "success",
+                amount: Number(amount) || 0,
+                date: purchaseDate,
+                paymentId: transactionId || orderId,
+                orderId,
+                voucherCode: voucherCode || voucherId || "",
+              },
+            };
             await set(profileRef, {
               ...(userProfile || {}),
               uid: user.uid,
@@ -3221,12 +3529,14 @@ function App() {
               plan: "plus",
               planName: "Plus",
               paymentOrderId: orderId,
+              purchaseHistory,
               usedVouchers: voucherId ? { ...(userProfile?.usedVouchers || {}), [voucherId]: Date.now() } : (userProfile?.usedVouchers || {}),
               planActivatedAt: Date.now(),
               planExpiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
               updatedAt: Date.now(),
             });
             setUserPlan("plus");
+            if (voucherCode && claimedVouchers[voucherCode]) await consumeVoucher(voucherCode);
           }}
         />
       ) : <>
