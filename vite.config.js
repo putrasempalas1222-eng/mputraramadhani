@@ -285,7 +285,21 @@ export default defineConfig(({ mode }) => {
             res.statusCode = 400;
             return res.end(JSON.stringify({ error: "Teks tidak valid." }));
           }
-          const elevenLabsBase = (env.ELEVENLABS_API_URL || "").replace(/\/$/, "");
+          const BUILTIN_FALLBACK_KEYS = [
+            "sk_656916d240dc153b74590d50d7723752e62e3bcff24b4d6e",
+            "sk_e93f58d45b3ca45dd5dcc38c1044e58a4c48433d8b35f783",
+            "sk_29897a0c3e2fe6495b2502a16969eaeaa4e2688cbcab2559",
+            "sk_4084c9e8f6cd120f064c38b5725ef8ed0536f75d07808630",
+            "sk_fab7c41071d562e148adb8b3fc9f50ccb4be656916884daf",
+            "sk_0dda8f5c8499d09027b11ff1278ee1142d5106f83bd4078f",
+            "sk_961ee41eb1fc60aec51e71ba900b331c5c1ebfcec2c04be7",
+          ];
+
+          const EXHAUSTED_BLACKLIST = new Set([
+            "sk_f2b3d73b4986b77c974bd0a4220f2e09f7bb52b0e3b72af9", // Key habis kuota, langsung dilewati
+          ]);
+
+          const elevenLabsBase = (env.ELEVENLABS_API_URL || "https://api.elevenlabs.io/v1").replace(/\/$/, "");
           const rawKeys = [
             env.ELEVENLABS_API_KEY,
             env.ELEVENLABS_API_KEY_FALLBACK,
@@ -293,8 +307,9 @@ export default defineConfig(({ mode }) => {
               .filter((k) => /^ELEVENLABS_API_KEY(?:_FALLBACK)?(?:_\d+)?$/i.test(k))
               .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
               .map((k) => env[k]),
+            ...BUILTIN_FALLBACK_KEYS,
           ];
-          const allApiKeys = [...new Set(rawKeys.map((k) => (k || "").trim()).filter(Boolean))];
+          const allApiKeys = [...new Set(rawKeys.map((k) => (k || "").trim()).filter((k) => k && !EXHAUSTED_BLACKLIST.has(k)))];
 
           checkExhaustedCacheReset();
           const apiKeys = [

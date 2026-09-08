@@ -1550,18 +1550,6 @@ function VoiceMode({
     exchangesRef.current = [{ role: "assistant", content: greeting }];
   };
 
-  const primeMicrophone = () => {
-    if (typeof navigator !== "undefined" && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      navigator.mediaDevices.getUserMedia({ audio: true })
-        .then((stream) => {
-          stream.getTracks().forEach((track) => track.stop());
-        })
-        .catch((err) => {
-          console.warn("Prime mic permission error:", err);
-        });
-    }
-  };
-
   const getAudioContext = () => {
     if (!audioCtxRef.current && typeof window !== "undefined") {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -1578,21 +1566,12 @@ function VoiceMode({
   const unlockAudio = async () => {
     if (audioUnlockPromiseRef.current) return audioUnlockPromiseRef.current;
     audioUnlockPromiseRef.current = (async () => {
-      const ctx = getAudioContext();
-      if (ctx && ctx.state === "suspended") {
-        try { await ctx.resume(); } catch {}
-      }
-      if (!audioRef.current && typeof Audio !== "undefined") {
-        const sound = new Audio();
-        sound.setAttribute("playsinline", "true");
-        sound.setAttribute("webkit-playsinline", "true");
-        sound.playsInline = true;
-        sound.preload = "auto";
-        audioRef.current = sound;
-      }
+      // 1. Unlock DOM audio element secara langsung di alur touch event pengguna
       if (audioRef.current) {
         try {
           audioRef.current.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAA";
+          audioRef.current.muted = false;
+          audioRef.current.volume = 1.0;
           await audioRef.current.play();
           audioRef.current.pause();
           audioRef.current.currentTime = 0;
@@ -1600,8 +1579,41 @@ function VoiceMode({
           console.warn("Audio element unlock:", e);
         }
       }
+      // 2. Bangunkan Web Audio Context
+      const ctx = getAudioContext();
+      if (ctx && ctx.state === "suspended") {
+        try { await ctx.resume(); } catch {}
+      }
     })();
     return audioUnlockPromiseRef.current;
+  };
+
+  const playViaWebAudio = async (arrayBuf, onFinish) => {
+    const ctx = getAudioContext();
+    if (!ctx) {
+      onFinish?.();
+      return;
+    }
+    if (ctx.state === "suspended") {
+      try { await ctx.resume(); } catch {}
+    }
+    try {
+      const decoded = await ctx.decodeAudioData(arrayBuf.slice(0));
+      const source = ctx.createBufferSource();
+      source.buffer = decoded;
+      source.connect(ctx.destination);
+      source.onended = () => {
+        if (audioSourceNodeRef.current === source) {
+          audioSourceNodeRef.current = null;
+        }
+        onFinish?.();
+      };
+      audioSourceNodeRef.current = source;
+      source.start(0);
+    } catch (err) {
+      console.warn("Web Audio fallback error:", err);
+      onFinish?.();
+    }
   };
 
   const getRecognition = () => {
@@ -1680,7 +1692,8 @@ function VoiceMode({
 
   const speak = async (text, onDone) => {
     if (mutedRef.current) { onDone?.(); return; }
-    setStatus("speaking");
+    // Biarkan status tetap "thinking" (bersiap) sampai audio ElevenLabs siap dan mulai bersuara
+    setStatus("thinking");
     const clean = stripForSpeech(text);
     if (!clean) { onDone?.(); return; }
 
@@ -1698,9 +1711,15 @@ function VoiceMode({
       onDone?.();
     };
 
+    const markSpeaking = () => {
+      if (statusRef.current !== "paused") {
+        setStatus("speaking");
+      }
+    };
+
     const curGender = voiceGenderRef.current;
 
-    // 1. Coba ElevenLabs Text-to-Speech via endpoint backend /api/tts (dengan fallback streaming otomatis)
+    // 1. Coba ElevenLabs Text-to-Speech via endpoint backend /api/tts (dengan rotasi multi-key & fallback streaming)
     try {
       const resp = await fetch("/api/tts", {
         method: "POST",
@@ -1715,54 +1734,59 @@ function VoiceMode({
 
       if (resp.ok) {
         const arrayBuf = await resp.arrayBuffer();
-
-        // 1a. Coba mainkan via Web Audio API (paling handal di mobile browser setelah gesture pertama)
-        const ctx = getAudioContext();
-        if (ctx) {
-          if (ctx.state === "suspended") {
-            try { await ctx.resume(); } catch {}
-          }
-          try {
-            const decodedBuffer = await ctx.decodeAudioData(arrayBuf.slice(0));
-            const source = ctx.createBufferSource();
-            source.buffer = decodedBuffer;
-            source.connect(ctx.destination);
-            source.onended = () => {
-              if (audioSourceNodeRef.current === source) {
-                audioSourceNodeRef.current = null;
-              }
-              handleDone();
-            };
-            audioSourceNodeRef.current = source;
-            source.start(0);
-            return;
-          } catch (decodeErr) {
-            console.warn("Web Audio decode error, beralih ke HTML5 Audio:", decodeErr);
-          }
-        }
-
-        // 1b. Fallback ke persistent HTML5 Audio element yang sudah di-unlock
         const blob = new Blob([arrayBuf], { type: "audio/mpeg" });
         const url = URL.createObjectURL(blob);
         activeBlobUrlRef.current = url;
 
+        // 1a. Prioritaskan HTML5 Audio element terpasang di DOM (Media playback channel)
         let sound = audioRef.current;
-        if (!sound) {
+        if (!sound && typeof Audio !== "undefined") {
           sound = new Audio();
           sound.setAttribute("playsinline", "true");
           sound.setAttribute("webkit-playsinline", "true");
           sound.playsInline = true;
           audioRef.current = sound;
         }
-        sound.muted = false;
-        sound.src = url;
-        sound.onended = handleDone;
-        sound.onerror = handleDone;
-        await sound.play();
+
+        if (sound) {
+          try {
+            sound.pause();
+            sound.currentTime = 0;
+            sound.src = url;
+            sound.muted = false;
+            sound.volume = 1.0;
+            // Aktifkan animasi "Sedang berbicara" HANYA ketika suara ElevenLabs benar-benar berbunyi
+            sound.onplay = markSpeaking;
+            sound.onended = () => {
+              URL.revokeObjectURL(url);
+              handleDone();
+            };
+            sound.onerror = (err) => {
+              console.warn("Audio element error, mencoba Web Audio:", err);
+              URL.revokeObjectURL(url);
+              playViaWebAudio(arrayBuf, handleDone);
+            };
+            const playPromise = sound.play();
+            if (playPromise && typeof playPromise.then === "function") {
+              playPromise
+                .then(() => markSpeaking())
+                .catch((err) => {
+                  console.warn("Audio element play() gagal/terblokir, mencoba Web Audio:", err);
+                  playViaWebAudio(arrayBuf, handleDone);
+                });
+            }
+            return;
+          } catch (playErr) {
+            console.warn("Audio element play exception, beralih ke Web Audio:", playErr);
+          }
+        }
+
+        // 1b. Fallback Web Audio API jika audio element gagal
+        playViaWebAudio(arrayBuf, handleDone);
         return;
       }
     } catch (e) {
-      console.warn("ElevenLabs TTS gagal, beralih ke SpeechSynthesis:", e);
+      console.warn("TTS API gagal, beralih ke SpeechSynthesis:", e);
     }
 
     // 2. Cadangan SpeechSynthesis bawaan jika ElevenLabs gagal atau offline
@@ -1780,6 +1804,7 @@ function VoiceMode({
             || voices.find((v) => /male|david|george/i.test(v.name));
           if (maleVoice) utter.voice = maleVoice;
         }
+        utter.onstart = markSpeaking;
         utter.onend = handleDone;
         utter.onerror = handleDone;
         window.speechSynthesis.speak(utter);
@@ -1795,9 +1820,9 @@ function VoiceMode({
       return;
     }
     if (!sttSupported) { setErrorKind("unsupported"); setStatus("error"); return; }
-    primeMicrophone();
     void unlockAudio();
     if (muted) { startListening(); return; }
+    setStatus("thinking");
     const greeting = voiceGenderRef.current === "female" ? (tr.voiceGreetingFemale || tr.voiceGreeting) : tr.voiceGreeting;
     speak(greeting, () => setTimeout(startListening, 350));
   };
@@ -2078,7 +2103,22 @@ function VoiceMode({
         )}
       </div>
 
-      <p className="voice-hint">{isVoiceLimitReached ? (tr.voiceLimitReachedDesc || tr.voiceHint) : tr.voiceHint}</p>
+      <p className="voice-hint">
+        {isVoiceLimitReached ? (tr.voiceLimitReachedDesc || tr.voiceHint) : tr.voiceHint}
+        <span style={{ display: "block", marginTop: "6px", fontSize: "11px", opacity: 0.75 }}>
+          Tip: Jika di iPhone/HP suara tidak keluar, pastikan tombol hening (Silent Switch) tidak aktif dan volume speaker dinaikkan.
+        </span>
+      </p>
+
+      {/* Audio element terpasang di DOM agar browser mobile mengalokasikan sesi Media playback */}
+      <audio
+        ref={audioRef}
+        playsInline
+        webkit-playsinline="true"
+        x-webkit-airplay="allow"
+        preload="auto"
+        style={{ position: "fixed", top: -9999, left: -9999, opacity: 0, pointerEvents: "none" }}
+      />
     </div>
   );
 }
