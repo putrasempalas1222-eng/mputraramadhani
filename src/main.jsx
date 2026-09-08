@@ -2672,6 +2672,10 @@ function App() {
   // Do not leave the landing screen until at least one message has rendered.
   const inChat = messages.length > 0;
   useEffect(() => {
+    if (!auth) {
+      setAuthReady(true);
+      return;
+    }
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setAuthReady(true);
