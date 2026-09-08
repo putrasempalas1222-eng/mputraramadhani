@@ -1469,6 +1469,7 @@ function VoiceMode({
   });
   const recogRef = useRef(null);
   const audioRef = useRef(null);
+  const audioUnlockRef = useRef(null);
   const statusRef = useRef("idle");
   const mutedRef = useRef(false);
   const interimRef = useRef("");
@@ -1556,6 +1557,26 @@ function VoiceMode({
     try { getRecognition().start(); } catch {}
   };
 
+  const unlockAudio = () => {
+    if (audioUnlockRef.current) return audioUnlockRef.current;
+    const sound = new Audio();
+    sound.setAttribute("playsinline", "true");
+    sound.playsInline = true;
+    sound.muted = true;
+    sound.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAA";
+    audioRef.current = sound;
+    audioUnlockRef.current = sound.play()
+      .then(() => {
+        sound.pause();
+        sound.currentTime = 0;
+        sound.muted = false;
+      })
+      .catch(() => {
+        audioRef.current = null;
+      });
+    return audioUnlockRef.current;
+  };
+
   const speak = async (text, onDone) => {
     if (mutedRef.current) { onDone?.(); return; }
     setStatus("speaking");
@@ -1593,7 +1614,11 @@ function VoiceMode({
       if (resp.ok) {
         const blob = await resp.blob();
         const url = URL.createObjectURL(blob);
-        const sound = new Audio(url);
+        const sound = audioRef.current || new Audio();
+        sound.setAttribute("playsinline", "true");
+        sound.playsInline = true;
+        sound.muted = false;
+        sound.src = url;
         audioRef.current = sound;
         sound.onended = () => {
           URL.revokeObjectURL(url);
@@ -1634,13 +1659,14 @@ function VoiceMode({
     handleDone();
   };
 
-  const begin = () => {
+  const begin = async () => {
     if (isVoiceLimitReached) {
       onUpgrade?.();
       return;
     }
     if (!sttSupported) { setErrorKind("unsupported"); setStatus("error"); return; }
     if (muted) { startListening(); return; }
+    await unlockAudio();
     const greeting = voiceGenderRef.current === "female" ? (tr.voiceGreetingFemale || tr.voiceGreeting) : tr.voiceGreeting;
     speak(greeting, () => setTimeout(startListening, 350));
   };
