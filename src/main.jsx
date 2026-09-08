@@ -2105,9 +2105,6 @@ function VoiceMode({
 
       <p className="voice-hint">
         {isVoiceLimitReached ? (tr.voiceLimitReachedDesc || tr.voiceHint) : tr.voiceHint}
-        <span style={{ display: "block", marginTop: "6px", fontSize: "11px", opacity: 0.75 }}>
-          Tip: Jika di iPhone/HP suara tidak keluar, pastikan tombol hening (Silent Switch) tidak aktif dan volume speaker dinaikkan.
-        </span>
       </p>
 
       {/* Audio element terpasang di DOM agar browser mobile mengalokasikan sesi Media playback */}
