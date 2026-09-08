@@ -1,34 +1,49 @@
 // i18n translation system for M Putra Ramadhani - Ai Indonesia
 // Automatically detects browser locale (Indonesian vs International/English)
 
-export function detectLanguage() {
+export function detectBrowserLocale() {
   try {
-    const saved = localStorage.getItem("val_ai_lang");
-    if (saved === "id" || saved === "en") return saved;
+    if (typeof navigator === "undefined") return "id";
+    const allLangs = [
+      navigator.language,
+      navigator.userLanguage,
+      navigator.browserLanguage,
+      ...(Array.isArray(navigator.languages) ? navigator.languages : []),
+    ]
+      .filter(Boolean)
+      .map((l) => String(l).toLowerCase());
 
-    const navLang = (
-      navigator.language ||
-      (Array.isArray(navigator.languages) && navigator.languages[0]) ||
-      ""
-    ).toLowerCase();
+    const hasId = allLangs.some((l) => l.startsWith("id") || l.startsWith("in"));
+    if (hasId) return "id";
 
-    // If browser language starts with "id" (id, id-ID), use Indonesian
-    if (navLang.startsWith("id")) {
-      return "id";
-    }
-
-    // Default for all international/outside locales is English
     return "en";
   } catch {
-    return "en";
+    return "id";
+  }
+}
+
+export function detectLanguage() {
+  try {
+    const manual = localStorage.getItem("val_ai_manual_lang");
+    if (manual === "id" || manual === "en") return manual;
+    return detectBrowserLocale();
+  } catch {
+    return detectBrowserLocale();
   }
 }
 
 export function saveLanguage(lang) {
   try {
-    localStorage.setItem("val_ai_lang", lang);
+    if (lang === "auto") {
+      localStorage.removeItem("val_ai_manual_lang");
+      localStorage.removeItem("val_ai_lang");
+    } else {
+      localStorage.setItem("val_ai_manual_lang", lang);
+      localStorage.setItem("val_ai_lang", lang);
+    }
   } catch {}
 }
+
 
 export const translations = {
   id: {
@@ -44,7 +59,7 @@ export const translations = {
     placeholderNormal: "Kirim pesan ke M Putra Ramadhani…",
     placeholderLimit: "Batas 10 chat paket Free tercapai. Klik Chat Baru atau Upgrade...",
     hintNormal: "M Putra Ramadhani - AI dapat membuat kesalahan. Periksa info penting lagi.",
-    hintLocked: "🔒 Input dinonaktifkan: kuota 10 pesan untuk paket Free di halaman chat ini telah tercapai.",
+    hintLocked: "kuota 10 pesan untuk paket Free di halaman chat ini telah tercapai.",
     quotaLabel: "Pesan",
     sendAria: "Kirim pesan",
     limitAria: "Batas chat tercapai",
@@ -92,8 +107,10 @@ export const translations = {
     openSidebar: "Buka riwayat chat",
     deleteChat: "Hapus chat",
 
-    voiceModeLabel: "Suara Putra",
+    voiceModeLabel: "Obrolan suara",
     voiceModeFemaleLabel: "Suara Putri",
+    voiceModeMaleHeader: "Suara Putra",
+    voiceModeFemaleHeader: "Suara Putri",
     voiceMale: "Laki-laki",
     voiceFemale: "Perempuan",
     voiceMaleTitle: "Pilih suara laki-laki (Putra)",
@@ -116,18 +133,19 @@ export const translations = {
     voicePause: "Jeda",
     voiceResume: "Lanjutkan",
     voicePausedStatus: "Obrolan suara dijeda",
+    voiceDirectSendTip: "Klik untuk langsung kirim tanpa menunggu 2,5 detik",
     voiceTranscriptTitle: "Percakapan Langsung",
     voiceClear: "Hapus",
     voiceClearTitle: "Hapus riwayat percakapan suara",
     voiceEmpty: "Percakapan suara akan tampil di sini...",
     voiceNoCodeAllowed: "Waduh, kalau urusan bikin kode atau kodingan, enaknya langsung di halaman chat teks aja ya. Di mode suara kita santai ngobrol seru aja. Yuk, mampir ke halaman chat kalau butuh kodingan!",
     voiceLimitReachedTitle: "Batas Obrolan Suara Tercapai",
-    voiceLimitReachedDesc: "Kuota gratis Anda (5 pesan suara per bulan) sudah habis. Kuota akan kembali bulan depan, atau tingkatkan ke Paket Plus untuk mengobrol sepuasnya sekarang!",
+    voiceLimitReachedDesc: "Kuota gratis Anda sudah habis. Kuota akan kembali bulan depan, atau tingkatkan ke Paket Plus untuk mengobrol sepuasnya sekarang!",
     voiceLimitBtnUpgrade: "✦ Upgrade ke Paket Plus",
     voiceLimitPillFree: "Sisa {n}/5 bln ini",
-    voiceLimitPillPlus: "✦ Plus · Sepuasnya",
-    voiceLimitPillExhausted: "Kuota Habis (5/5)",
-    voiceLimitMsg: "Batas kuota obrolan suara gratis kamu sudah mencapai 5 pesan untuk bulan ini. Kuota baru akan kembali bulan depan, atau upgrade ke Paket Plus untuk mengobrol sepuasnya tanpa batas!",
+    voiceLimitPillPlus: "✦ Plus",
+    voiceLimitPillExhausted: "Kuota Habis",
+    voiceLimitMsg: "Batas kuota obrolan suara gratis kamu sudah mencapai batas untuk bulan ini. Kuota baru akan kembali bulan depan, atau upgrade ke Paket Plus untuk mengobrol sepuasnya tanpa batas!",
 
     copyBtn: "Salin",
     copiedBtn: "Tersalin",
@@ -250,6 +268,42 @@ export const translations = {
     plusPill: "Plus",
     freePill: "Free",
     defaultAiGreeting: "Halo! Saya M Putra Ramadhani - Ai Indonesia. Senang bisa terhubung dengan Anda! Ada yang bisa saya bantu atau diskusikan bersama hari ini?",
+
+    authDivider: "atau",
+    attachPhoto: "Foto",
+    attachFile: "File",
+    addAttachment: "Tambah lampiran",
+    closeNotice: "Tutup pemberitahuan",
+    photoLabel: "FOTO",
+    fileLabel: "FILE",
+    photoCardLabel: "Foto",
+    attachmentCardLabel: "Lampiran",
+    clickToEnlarge: "Klik untuk memperbesar",
+    currentPlanActive: "Paket {plan} Aktif",
+    upgradeToPlusArrow: "Tingkatkan ke Plus →",
+    savingText: "Menyimpan…",
+    fullNamePlaceholder: "Nama lengkap Anda",
+    validUntil: "Masa aktif hingga",
+    daysFromActivation: "30 hari sejak aktivasi",
+    checkoutTitle: "Checkout Paket Plus",
+    checkoutItem: "Paket Plus / bulan",
+    checkoutDiscount: "Potongan voucher {percent}%",
+    checkoutTax: "PPN 11%",
+    checkoutTotal: "Total pembayaran",
+    checkoutProceed: "Lanjut ke transaksi {method}",
+    checkoutNoVoucher: "Tidak ada voucher aktif untuk akun ini.",
+    checkoutVoucherApplied: "Diskon {percent}% otomatis diterapkan. Voucher ini hanya bisa dipakai sekali.",
+    paymentSuccessTitle: "Pembayaran berhasil",
+    paymentSuccessDesc: "Paket Plus sudah aktif untuk akun Anda.",
+    paymentFinishBtn: "Selesai",
+    paymentMethodGoPayTitle: "Bayar dengan GoPay",
+    paymentMethodQrisTitle: "Bayar dengan QRIS",
+    paymentGoPayDesc: "Lanjutkan pembayaran melalui aplikasi GoPay atau scan kode QR.",
+    paymentQrisDesc: "Scan QR menggunakan GoPay atau aplikasi QRIS lain.",
+    openGoPay: "Buka GoPay",
+    paymentWait: "Menunggu pembayaran secara otomatis…",
+    bannedAppealPrefix: "Untuk permohonan peninjauan akun, silakan hubungi tim kami di",
+    langAuto: "Otomatis (Sesuai Browser)",
   },
   en: {
     appName: "M Putra Ramadhani",
@@ -312,8 +366,10 @@ export const translations = {
     openSidebar: "Open chat history",
     deleteChat: "Delete chat",
 
-    voiceModeLabel: "Putra's Voice",
+    voiceModeLabel: "Voice Chat",
     voiceModeFemaleLabel: "Putri's Voice",
+    voiceModeMaleHeader: "Putra's Voice",
+    voiceModeFemaleHeader: "Putri's Voice",
     voiceMale: "Male",
     voiceFemale: "Female",
     voiceMaleTitle: "Select male voice (Putra)",
@@ -473,6 +529,43 @@ export const translations = {
     plusPill: "Plus",
     freePill: "Free",
     defaultAiGreeting: "Hello! I am M Putra Ramadhani - Ai Indonesia. Glad to connect with you! How can I assist or collaborate with you today?",
+
+    authDivider: "or",
+    attachPhoto: "Photo",
+    attachFile: "File",
+    addAttachment: "Add attachment",
+    closeNotice: "Close notification",
+    photoLabel: "PHOTO",
+    fileLabel: "FILE",
+    photoCardLabel: "Photo",
+    attachmentCardLabel: "Attachment",
+    clickToEnlarge: "Click to enlarge",
+    currentPlanActive: "{plan} Plan Active",
+    upgradeToPlusArrow: "Upgrade to Plus →",
+    savingText: "Saving…",
+    fullNamePlaceholder: "Your full name",
+    validUntil: "Valid until",
+    daysFromActivation: "30 days from activation",
+    checkoutTitle: "Checkout Plus Plan",
+    checkoutItem: "Plus Plan / month",
+    checkoutDiscount: "Voucher discount {percent}%",
+    checkoutTax: "VAT 11%",
+    checkoutTotal: "Total payment",
+    checkoutProceed: "Proceed with {method}",
+    checkoutNoVoucher: "No active voucher for this account.",
+    checkoutVoucherApplied: "{percent}% discount automatically applied. Voucher can only be used once.",
+    paymentSuccessTitle: "Payment Successful",
+    paymentSuccessDesc: "Plus Plan is now active for your account.",
+    paymentFinishBtn: "Done",
+    paymentMethodGoPayTitle: "Pay with GoPay",
+    paymentMethodQrisTitle: "Pay with QRIS",
+    paymentGoPayDesc: "Proceed with GoPay app or scan the QR code.",
+    paymentQrisDesc: "Scan QR using GoPay or any QRIS supported app.",
+    openGoPay: "Open GoPay",
+    paymentWait: "Awaiting automatic payment confirmation…",
+    bannedAppealPrefix: "For account review inquiries, please reach out to our team at",
+    langAuto: "Automatic (Browser Default)",
+    voiceDirectSendTip: "Click to send immediately without waiting 2.5s",
   },
 };
 

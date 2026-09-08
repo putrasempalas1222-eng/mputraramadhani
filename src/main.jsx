@@ -7,7 +7,7 @@ import { onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndP
 import { ref, push, set, update, remove, onValue, get } from "firebase/database";
 import { auth, db, googleProvider } from "./firebase";
 import { CURATED_FREE_MODELS, getSavedModel, saveModel, findModel } from "./models";
-import { detectLanguage, saveLanguage, getTranslation } from "./i18n";
+import { detectLanguage, detectBrowserLocale, saveLanguage, getTranslation } from "./i18n";
 import brandLogo from "./logo/logo-mputraramadhani.png";
 
 const CONFIG = {
@@ -619,7 +619,7 @@ function Composer({
         <div className="chat-limit-banner">
           <div className="chat-limit-left">
             <span className="chat-limit-text">
-              <strong></strong> {"Pesan anda sudah sampai batas ayo mulai chat baru atau upgrade ke Plus."}
+              {tr.limitShortDesc || "Pesan anda sudah sampai batas ayo mulai chat baru atau upgrade ke Plus."}
             </span>
           </div>
           <div className="chat-limit-actions">
@@ -649,7 +649,7 @@ function Composer({
         <div className="upload-limit-banner">
           <div className="upload-limit-left">
             <span className="upload-limit-text">
-              <strong></strong> { "Menggugah anda sudah sampai batas ayo upgrade ke Plus untuk menggugah tanpa batas."}
+              {tr.limitUploadShortDesc || "Menggugah anda sudah sampai batas ayo upgrade ke Plus untuk menggugah tanpa batas."}
             </span>
           </div>
           <div className="upload-limit-right">
@@ -665,20 +665,20 @@ function Composer({
               type="button"
               className="upload-limit-close-btn"
               onClick={() => setUploadBannerDismissed(true)}
-              aria-label="Tutup pemberitahuan"
-              title="Tutup"
+              aria-label={tr.closeNotice || "Tutup pemberitahuan"}
+              title={tr.closeNotice || "Tutup"}
             >
               ×
             </button>
           </div>
         </div>
       ) : null}
-      {attachments.length > 0 && <div className="composer-attachments">{attachments.map((file, index) => <div className="composer-attachment" key={`${file.name}-${index}`}>{file.isImage ? <img src={file.dataUrl} alt="Lampiran" /> : <span className="attachment-file-icon">FILE</span>}<span>{file.name}</span><button type="button" onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label="Hapus lampiran">×</button></div>)}</div>}
+      {attachments.length > 0 && <div className="composer-attachments">{attachments.map((file, index) => <div className="composer-attachment" key={`${file.name}-${index}`}>{file.isImage ? <img src={file.dataUrl} alt={tr.attachmentCardLabel || "Lampiran"} /> : <span className="attachment-file-icon">{tr.fileLabel || "FILE"}</span>}<span>{file.name}</span><button type="button" onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={tr.deleteChat || "Hapus"}>×</button></div>)}</div>}
       <div className={`composer ${isLimitReached ? "composer-locked" : ""}`}>
         <input ref={fileInput} className="attachment-input" type="file" multiple accept={attachmentMode === "photo" ? "image/*" : "application/pdf,.docx,.xls,.xlsx,.pptx,.txt,.md,.csv,.json"} onChange={(event) => { void addFiles(event.target.files); event.target.value = ""; }} />
         <div className="attachment-menu-wrap">
-          {attachmentMenuOpen && <div className="attachment-menu"><button type="button" onClick={() => openAttachmentPicker("photo")}>Foto</button><button type="button" onClick={() => openAttachmentPicker("file")}>File</button></div>}
-          <button className="attachment-btn" type="button" disabled={disabled || isLimitReached || attachments.length >= 3 || (userPlan === "free" && attachmentRemaining <= attachments.length)} onClick={() => setAttachmentMenuOpen((open) => !open)} title="Tambah lampiran" aria-label="Tambah lampiran"><span>+</span></button>
+          {attachmentMenuOpen && <div className="attachment-menu"><button type="button" onClick={() => openAttachmentPicker("photo")}>{tr.attachPhoto || "Foto"}</button><button type="button" onClick={() => openAttachmentPicker("file")}>{tr.attachFile || "File"}</button></div>}
+          <button className="attachment-btn" type="button" disabled={disabled || isLimitReached || attachments.length >= 3 || (userPlan === "free" && attachmentRemaining <= attachments.length)} onClick={() => setAttachmentMenuOpen((open) => !open)} title={tr.addAttachment || "Tambah lampiran"} aria-label={tr.addAttachment || "Tambah lampiran"}><span>+</span></button>
         </div>
         <textarea
           ref={input}
@@ -1044,6 +1044,7 @@ function ChatMessageBody({ content, t }) {
 function Actions({
   text,
   onRegenerate,
+  showRegenerate = true,
   t,
   disabled,
   versions = null,
@@ -1112,21 +1113,23 @@ function Actions({
         <span>{copied ? tr.copiedBtn : tr.copyBtn}</span>
       </button>
 
-      <button
-        type="button"
-        className="icon-btn regen-btn"
-        onClick={disabled ? undefined : onRegenerate}
-        disabled={disabled}
-        title={disabled ? (tr.limitTitle || "Batas chat tercapai") : tr.regenBtn}
-        aria-label={disabled ? (tr.limitTitle || "Batas chat tercapai") : tr.regenBtn}
-        style={disabled ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
-      >
-        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="23 4 23 10 17 10" />
-          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-        </svg>
-        <span>{tr.regenBtn ? tr.regenBtn.replace(/^[↻\s]+/, "") : "Buat ulang"}</span>
-      </button>
+      {showRegenerate && (
+        <button
+          type="button"
+          className="icon-btn regen-btn"
+          onClick={disabled ? undefined : onRegenerate}
+          disabled={disabled}
+          title={disabled ? (tr.limitTitle || "Batas chat tercapai") : tr.regenBtn}
+          aria-label={disabled ? (tr.limitTitle || "Batas chat tercapai") : tr.regenBtn}
+          style={disabled ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
+        >
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="23 4 23 10 17 10" />
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+          </svg>
+          <span>{tr.regenBtn ? tr.regenBtn.replace(/^[↻\s]+/, "") : "Buat ulang"}</span>
+        </button>
+      )}
     </div>
   );
 }
@@ -1755,25 +1758,8 @@ function VoiceMode({
       <div className="voice-top">
         <div className="voice-top-left">
           <span className="voice-top-title">
-            {voiceGender === "female" ? (tr.voiceModeFemaleLabel || "Suara Putri") : (tr.voiceModeLabel || "Suara Putra")}
+            {voiceGender === "female" ? (tr.voiceModeFemaleHeader || tr.voiceModeFemaleLabel || "Suara Putri") : (tr.voiceModeMaleHeader || "Suara Putra")}
           </span>
-          {userPlan === "plus" ? (
-            <span className="voice-plan-pill plus" title="Paket Plus: Obrolan suara tanpa batas bulanan">
-              {tr.voiceLimitPillPlus || "✦ Plus · Sepuasnya"}
-            </span>
-          ) : (
-            <button
-              type="button"
-              className={`voice-plan-pill free ${isVoiceLimitReached ? "limit-reached" : ""}`}
-              onClick={onUpgrade}
-              title={isVoiceLimitReached ? "Batas bulanan tercapai. Klik untuk upgrade ke Plus!" : "Batas gratis 5 obrolan suara per bulan. Klik untuk upgrade ke Plus"}
-            >
-              {isVoiceLimitReached
-                ? (tr.voiceLimitPillExhausted || "Kuota Habis (5/5)")
-                : (tr.voiceLimitPillFree ? tr.voiceLimitPillFree.replace("{n}", remainingVoiceCount) : `Sisa ${remainingVoiceCount}/${freeVoiceLimit} bln ini`)}
-              <span className="voice-pill-upgrade-arrow">→</span>
-            </button>
-          )}
         </div>
         <div className="voice-top-actions">
           <div className="voice-gender-toggle" role="group" aria-label="Filter Suara">
@@ -1796,26 +1782,6 @@ function VoiceMode({
               <span>♀</span> {tr.voiceFemale || "Perempuan"}
             </button>
           </div>
-          <button
-            type="button"
-            className="voice-icon-btn"
-            onClick={toggleMute}
-            aria-pressed={muted}
-            title={muted ? tr.voiceUnmute : tr.voiceMute}
-            aria-label={muted ? tr.voiceUnmute : tr.voiceMute}
-          >
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M11 5 6 9H2v6h4l5 4z" />
-              {muted ? (
-                <>
-                  <line x1="16" y1="9" x2="22" y2="15" />
-                  <line x1="22" y1="9" x2="16" y2="15" />
-                </>
-              ) : (
-                <path d="M15.5 8.5a5 5 0 0 1 0 7" />
-              )}
-            </svg>
-          </button>
           <button
             type="button"
             className="voice-icon-btn"
@@ -1890,7 +1856,7 @@ function VoiceMode({
               }}
               title={
                 status === "listening"
-                  ? "Klik untuk langsung kirim tanpa menunggu 2,5 detik"
+                  ? (tr.voiceDirectSendTip || "Klik untuk langsung kirim tanpa menunggu 2,5 detik")
                   : status === "paused"
                   ? (tr.voiceResume || "Lanjutkan")
                   : undefined
@@ -2171,7 +2137,7 @@ function AccountPage({
                 className="auth-input"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
-                placeholder="Nama lengkap Anda"
+                placeholder={tr.fullNamePlaceholder || "Nama lengkap Anda"}
               />
             </div>
 
@@ -2196,7 +2162,7 @@ function AccountPage({
               <div className="profile-sub-banner">
                 <div className="profile-sub-left">
                   <span className="profile-sub-heading">
-                    {userPlan === "plus" ? "Paket Plus Aktif" : "Paket Free Aktif"}
+                    {(tr.currentPlanActive || "Paket {plan} Aktif").replace("{plan}", userPlan === "plus" ? "Plus" : "Free")}
                   </span>
                   <p className="profile-sub-desc">
                     {userPlan === "plus" ? tr.planPlusDesc : tr.planFreeDesc}
@@ -2210,11 +2176,11 @@ function AccountPage({
                         <line x1="3" y1="10" x2="21" y2="10" />
                       </svg>
                       <span>
-                        {lang === "id" ? "Masa aktif hingga" : "Valid until"}:{" "}
+                        {tr.validUntil || (lang === "id" ? "Masa aktif hingga" : "Valid until")}:{" "}
                         <strong>
                           {(userProfile?.planExpiresAt || userProfile?.expiresAt || userProfile?.planExpiry)
                             ? formatDate(userProfile?.planExpiresAt || userProfile?.expiresAt || userProfile?.planExpiry)
-                            : (lang === "id" ? "30 hari sejak aktivasi" : "30 days from activation")}
+                            : (tr.daysFromActivation || (lang === "id" ? "30 hari sejak aktivasi" : "30 days from activation"))}
                         </strong>
                       </span>
                     </div>
@@ -2226,7 +2192,7 @@ function AccountPage({
                     className="profile-sub-action"
                     onClick={() => onNavigate?.("upgrade")}
                   >
-                    Tingkatkan ke Plus →
+                    {tr.upgradeToPlusArrow || "Tingkatkan ke Plus →"}
                   </button>
                 ) : (
                   <span className="profile-plan-pill plus">
@@ -2243,9 +2209,10 @@ function AccountPage({
                 <select
                   id="account-lang-select"
                   className="auth-input lang-select"
-                  value={lang}
+                  value={localStorage.getItem("val_ai_manual_lang") || "auto"}
                   onChange={(e) => onLangChange?.(e.target.value)}
                 >
+                  <option value="auto">{tr.langAuto || (lang === "id" ? "Otomatis (Sesuai Browser)" : "Automatic (Browser Default)")}</option>
                   <option value="id">{tr.langAutoId}</option>
                   <option value="en">{tr.langEn}</option>
                 </select>
@@ -2261,7 +2228,7 @@ function AccountPage({
             <div className="profile-footer">
               <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
                 <button className="profile-save-btn" disabled={saving} onClick={handleSave}>
-                  {saving ? "Menyimpan…" : tr.btnSaveSettings}
+                  {saving ? (tr.savingText || "Menyimpan…") : tr.btnSaveSettings}
                 </button>
                 {saveSuccess && (
                   <span style={{ color: "#5edb9c", fontSize: "13px", display: "inline-flex", alignItems: "center", gap: "6px" }}>
@@ -2284,7 +2251,7 @@ function AccountPage({
             {/* Status Free saat ini */}
             {userPlan === "free" && (
               <div className="upgrade-free-summary">
-                <span>Status Saat Ini: <strong>Paket Free</strong> ({tr.planFreeDesc})</span>
+                <span>{lang === "id" ? "Status Saat Ini:" : "Current Status:"} <strong>{tr.freePlanName || "Paket Free"}</strong> ({tr.planFreeDesc})</span>
                 <span className="upgrade-free-tag">{tr.btnActivePlan}</span>
               </div>
             )}
@@ -2295,9 +2262,9 @@ function AccountPage({
                 <div className="upgrade-headline-wrap">
                   <span className="upgrade-badge-subtle">
                     {userPlan === "plus"
-                      ? "Paket Aktif Anda"
+                      ? (lang === "id" ? "Paket Aktif Anda" : "Your Active Plan")
                       : discountPercent > 0
-                        ? `Penawaran Khusus: Diskon ${discountPercent}%`
+                        ? (lang === "id" ? `Penawaran Khusus: Diskon ${discountPercent}%` : `Special Offer: ${discountPercent}% Off`)
                         : tr.popularBadge}
                   </span>
                   <h2 className="upgrade-plan-title">{tr.plusPlanName}</h2>
@@ -2313,7 +2280,7 @@ function AccountPage({
                         <span className="upgrade-price-period">{tr.plusPeriod}</span>
                       </div>
                       <div className="upgrade-promo-explainer">
-                        Diskon {discountPercent}% diterapkan otomatis untuk akun Anda
+                        {lang === "id" ? `Diskon ${discountPercent}% diterapkan otomatis untuk akun Anda` : `${discountPercent}% discount automatically applied to your account`}
                       </div>
                     </>
                   ) : (
@@ -2333,7 +2300,7 @@ function AccountPage({
                     <span>{tr.plusF1}</span>
                   </div>
                   <p className="upgrade-pillar-text">
-                    Eksplorasi gagasan dan diskusi mendalam tanpa batasan kuota pesan.
+                    {lang === "id" ? "Eksplorasi gagasan dan diskusi mendalam tanpa batasan kuota pesan." : "Deep discussions and brainstorming without message limits."}
                   </p>
                 </div>
 
@@ -2343,7 +2310,7 @@ function AccountPage({
                     <span>{tr.plusF2}</span>
                   </div>
                   <p className="upgrade-pillar-text">
-                    Akses penuh ke seluruh koleksi model M Putra Ramadhani: Ultra, Lightning, Genius, dan lainnya.
+                    {lang === "id" ? "Akses penuh ke seluruh koleksi model M Putra Ramadhani: Ultra, Lightning, Genius, dan lainnya." : "Full access to all M Putra Ramadhani models: Ultra, Lightning, Genius, and more."}
                   </p>
                 </div>
 
@@ -2353,7 +2320,7 @@ function AccountPage({
                     <span>{tr.plusF3}</span>
                   </div>
                   <p className="upgrade-pillar-text">
-                    Kapasitas penalaran lebih luas untuk analisis dokumen, riset, dan logika panjang.
+                    {lang === "id" ? "Kapasitas penalaran lebih luas untuk analisis dokumen, riset, dan logika panjang." : "Expanded context capacity for document analysis, research, and long reasoning."}
                   </p>
                 </div>
 
@@ -2363,7 +2330,7 @@ function AccountPage({
                     <span>{tr.plusF4}</span>
                   </div>
                   <p className="upgrade-pillar-text">
-                    Komputasi respons tercepat setiap saat dan akses pertama ke fitur terbaru.
+                    {lang === "id" ? "Komputasi respons tercepat setiap saat dan akses pertama ke fitur terbaru." : "Fastest response computation at all times and priority access to new features."}
                   </p>
                 </div>
               </div>
@@ -2372,7 +2339,7 @@ function AccountPage({
               <div className="upgrade-cta-box">
                 {userPlan === "plus" ? (
                   <div className="upgrade-already-active">
-                    <div>Paket Plus aktif</div>
+                    <div>{lang === "id" ? "Paket Plus aktif" : "Plus Plan active"}</div>
                     {(userProfile?.planExpiresAt || userProfile?.expiresAt || userProfile?.planExpiry) && (
                       <small style={{ display: "block", marginTop: "4px", fontSize: "12px", opacity: 0.85 }}>
                         {lang === "id" ? "Masa aktif hingga" : "Valid until"}: {formatDate(userProfile?.planExpiresAt || userProfile?.expiresAt || userProfile?.planExpiry)}
@@ -2390,12 +2357,12 @@ function AccountPage({
                         {buying
                           ? tr.btnComingSoon
                           : discountPercent > 0
-                            ? `Berlangganan Plus: ${buttonPromoPriceText} / bln`
-                            : `${tr.btnBuyPlus}, Rp 500rb / bln`}
+                            ? (lang === "id" ? `Berlangganan Plus: ${buttonPromoPriceText} / bln` : `Subscribe to Plus: ${buttonPromoPriceText} / mo`)
+                            : (lang === "id" ? `${tr.btnBuyPlus}, Rp 500rb / bln` : `${tr.btnBuyPlus}, Rp 500k / mo`)}
                       </span>
                     </button>
                     <span className="upgrade-subtext-reassure">
-                      Dapat dibatalkan kapan saja. Aktivasi instan ke akun Anda.
+                      {lang === "id" ? "Dapat dibatalkan kapan saja. Aktivasi instan ke akun Anda." : "Cancel anytime. Instant activation to your account."}
                     </span>
                     {paymentError && <span className="upgrade-payment-error">{paymentError}</span>}
                   </>
@@ -2409,28 +2376,28 @@ function AccountPage({
               </div>
             )}
             {paymentChoiceOpen && (
-              <div className="payment-overlay" role="dialog" aria-modal="true" aria-label="Checkout">
+              <div className="payment-overlay" role="dialog" aria-modal="true" aria-label={tr.checkoutTitle || "Checkout"}>
                 <div className="payment-dialog payment-choice">
-                  <button className="payment-close" onClick={() => setPaymentChoiceOpen(false)} aria-label="Tutup">×</button>
-                  <h2>Checkout Paket Plus</h2>
-                  <div className="checkout-row"><span>Paket Plus / bulan</span><strong>Rp 500.000</strong></div>
-                  {isEligible && <div className="checkout-row discount"><span>Potongan voucher {discountPercent}%</span><strong>− {rupiah(voucherDiscount)}</strong></div>}
-                  <div className="checkout-row"><span>PPN 11%</span><strong>{rupiah(taxAmount)}</strong></div>
-                  {isEligible ? <div className="checkout-voucher-applied"><strong>{userPromo?.promo?.promoCode || "VOUCHER"}</strong><span>Diskon {discountPercent}% otomatis diterapkan. Voucher ini hanya bisa dipakai sekali.</span></div> : <p className="checkout-note">Tidak ada voucher aktif untuk akun ini.</p>}
-                  <div className="checkout-total"><span>Total pembayaran</span><strong>{rupiah(checkoutTotal)}</strong></div>
+                  <button className="payment-close" onClick={() => setPaymentChoiceOpen(false)} aria-label={lang === "id" ? "Tutup" : "Close"}>×</button>
+                  <h2>{tr.checkoutTitle || "Checkout Paket Plus"}</h2>
+                  <div className="checkout-row"><span>{tr.checkoutItem || "Paket Plus / bulan"}</span><strong>Rp 500.000</strong></div>
+                  {isEligible && <div className="checkout-row discount"><span>{(tr.checkoutDiscount || "Potongan voucher {percent}%").replace("{percent}", discountPercent)}</span><strong>− {rupiah(voucherDiscount)}</strong></div>}
+                  <div className="checkout-row"><span>{tr.checkoutTax || "PPN 11%"}</span><strong>{rupiah(taxAmount)}</strong></div>
+                  {isEligible ? <div className="checkout-voucher-applied"><strong>{userPromo?.promo?.promoCode || "VOUCHER"}</strong><span>{(tr.checkoutVoucherApplied || "Diskon {percent}% otomatis diterapkan. Voucher ini hanya bisa dipakai sekali.").replace("{percent}", discountPercent)}</span></div> : <p className="checkout-note">{tr.checkoutNoVoucher || "Tidak ada voucher aktif untuk akun ini."}</p>}
+                  <div className="checkout-total"><span>{tr.checkoutTotal || "Total pembayaran"}</span><strong>{rupiah(checkoutTotal)}</strong></div>
                   <div className="checkout-methods"><button className={paymentMethod === "gopay" ? "active" : ""} onClick={() => setPaymentMethod("gopay")}>GoPay</button><button className={paymentMethod === "qris" ? "active" : ""} onClick={() => setPaymentMethod("qris")}>QRIS</button></div>
-                  <button className="payment-method-btn checkout-pay" onClick={() => handleBuyPlus(paymentMethod)}>Lanjut ke transaksi {paymentMethod === "gopay" ? "GoPay" : "QRIS"}</button>
+                  <button className="payment-method-btn checkout-pay" onClick={() => handleBuyPlus(paymentMethod)}>{(tr.checkoutProceed || "Lanjut ke transaksi {method}").replace("{method}", paymentMethod === "gopay" ? "GoPay" : "QRIS")}</button>
                 </div>
               </div>
             )}
             {payment && (
-              <div className="payment-overlay" role="dialog" aria-modal="true" aria-label="Pembayaran QRIS">
+              <div className="payment-overlay" role="dialog" aria-modal="true" aria-label={payment.method === "gopay" ? (tr.paymentMethodGoPayTitle || "Bayar dengan GoPay") : (tr.paymentMethodQrisTitle || "Bayar dengan QRIS")}>
                 <div className="payment-dialog">
-                  <button className="payment-close" onClick={() => setPayment(null)} aria-label="Tutup">×</button>
+                  <button className="payment-close" onClick={() => setPayment(null)} aria-label={lang === "id" ? "Tutup" : "Close"}>×</button>
                   {payment.paid ? (
-                    <><h2>Pembayaran berhasil</h2><p>Paket Plus sudah aktif untuk akun Anda.</p><button className="settings-save" onClick={() => setPayment(null)}>Selesai</button></>
+                    <><h2>{tr.paymentSuccessTitle || "Pembayaran berhasil"}</h2><p>{tr.paymentSuccessDesc || "Paket Plus sudah aktif untuk akun Anda."}</p><button className="settings-save" onClick={() => setPayment(null)}>{tr.paymentFinishBtn || "Selesai"}</button></>
                   ) : (
-                    <><h2>{payment.method === "gopay" ? "Bayar dengan GoPay" : "Bayar dengan QRIS"}</h2><p>{payment.method === "gopay" ? "Lanjutkan pembayaran melalui aplikasi GoPay atau scan kode QR." : "Scan QR menggunakan GoPay atau aplikasi QRIS lain."}</p>{payment.qrDataUrl ? <img className="payment-qr" src={payment.qrDataUrl} alt="Kode QR pembayaran Paket Plus" /> : payment.qrUrl ? <img className="payment-qr" src={payment.qrUrl} alt="Kode QR pembayaran Paket Plus" /> : null}{payment.method === "gopay" && payment.deepLink && <a className="payment-gopay-link" href={payment.deepLink}>Buka GoPay</a>}<strong>{new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(payment.breakdown?.total || 0)}</strong><p className="payment-wait">Menunggu pembayaran secara otomatis…</p></>
+                    <><h2>{payment.method === "gopay" ? (tr.paymentMethodGoPayTitle || "Bayar dengan GoPay") : (tr.paymentMethodQrisTitle || "Bayar dengan QRIS")}</h2><p>{payment.method === "gopay" ? (tr.paymentGoPayDesc || "Lanjutkan pembayaran melalui aplikasi GoPay atau scan kode QR.") : (tr.paymentQrisDesc || "Scan QR menggunakan GoPay atau aplikasi QRIS lain.")}</p>{payment.qrDataUrl ? <img className="payment-qr" src={payment.qrDataUrl} alt="Kode QR pembayaran Paket Plus" /> : payment.qrUrl ? <img className="payment-qr" src={payment.qrUrl} alt="Kode QR pembayaran Paket Plus" /> : null}{payment.method === "gopay" && payment.deepLink && <a className="payment-gopay-link" href={payment.deepLink}>{tr.openGoPay || "Buka GoPay"}</a>}<strong>{new Intl.NumberFormat(lang === "id" ? "id-ID" : "en-US", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(payment.breakdown?.total || 0)}</strong><p className="payment-wait">{tr.paymentWait || "Menunggu pembayaran secara otomatis…"}</p></>
                   )}
                 </div>
               </div>
@@ -2458,8 +2425,30 @@ function App() {
 
   const handleLangChange = (newLang) => {
     saveLanguage(newLang);
-    setLang(newLang);
+    if (newLang === "auto") {
+      setLang(detectBrowserLocale());
+    } else {
+      setLang(newLang);
+    }
   };
+
+  useEffect(() => {
+    const handleLocaleChange = () => {
+      const manual = localStorage.getItem("val_ai_manual_lang");
+      if (!manual) {
+        setLang(detectBrowserLocale());
+      }
+    };
+    window.addEventListener("languagechange", handleLocaleChange);
+    return () => window.removeEventListener("languagechange", handleLocaleChange);
+  }, []);
+
+  useEffect(() => {
+    try {
+      document.documentElement.lang = lang;
+      document.title = t.websiteName || "M Putra Ramadhani - Ai Indonesia";
+    } catch {}
+  }, [lang, t]);
 
   const [userProfile, setUserProfile] = useState(null);
   const [userPlan, setUserPlan] = useState(() => {
@@ -2872,7 +2861,9 @@ function App() {
     setStreaming(true);
     if (targetIndex !== null && typeof targetIndex === "number") {
       setMessages((current) =>
-        current.map((m, i) => (i === targetIndex ? { ...m, pending: true, error: null } : m))
+        current.map((m, i) => (i === targetIndex
+          ? { ...m, content: "", pending: true, error: null, versions: [], versionIndex: 0 }
+          : m))
       );
     } else {
       setMessages((current) => [...current, { role: "assistant", content: "", pending: true, at: assistantTime }]);
@@ -3279,11 +3270,11 @@ function App() {
                                 className="msg-standalone-photo-wrap"
                                 key={fileIdx}
                                 onClick={() => setPreviewImage(imgSrc)}
-                                title="Klik untuk memperbesar"
+                                title={t.clickToEnlarge || (lang === "id" ? "Klik untuk memperbesar" : "Click to enlarge")}
                               >
                                 <img
                                   src={imgSrc}
-                                  alt="Foto"
+                                  alt={t.photoCardLabel || (lang === "id" ? "Foto" : "Photo")}
                                   className="msg-standalone-photo"
                                 />
                               </div>
@@ -3291,8 +3282,8 @@ function App() {
                           }
                           return (
                             <div className="msg-attachment-file-card" key={fileIdx}>
-                              <span className="attachment-file-icon">{isImg ? "FOTO" : "FILE"}</span>
-                              <span className="msg-attachment-file-name">{file.name || (isImg ? "Foto" : "Lampiran")}</span>
+                              <span className="attachment-file-icon">{isImg ? (t.photoLabel || "FOTO") : (t.fileLabel || "FILE")}</span>
+                              <span className="msg-attachment-file-name">{file.name || (isImg ? (t.photoCardLabel || "Foto") : (t.attachmentCardLabel || "Lampiran"))}</span>
                             </div>
                           );
                         })}
@@ -3316,6 +3307,7 @@ function App() {
                       <Actions
                         text={message.error || message.content}
                         onRegenerate={() => regenerate(index)}
+                        showRegenerate={index === messages.length - 1}
                         t={t}
                         disabled={isLimitReached || streaming}
                         versions={message.versions}
