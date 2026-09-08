@@ -1659,14 +1659,14 @@ function VoiceMode({
     handleDone();
   };
 
-  const begin = async () => {
+  const begin = () => {
     if (isVoiceLimitReached) {
       onUpgrade?.();
       return;
     }
     if (!sttSupported) { setErrorKind("unsupported"); setStatus("error"); return; }
     if (muted) { startListening(); return; }
-    await unlockAudio();
+    void unlockAudio();
     const greeting = voiceGenderRef.current === "female" ? (tr.voiceGreetingFemale || tr.voiceGreeting) : tr.voiceGreeting;
     speak(greeting, () => setTimeout(startListening, 350));
   };
