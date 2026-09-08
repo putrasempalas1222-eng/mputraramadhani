@@ -1,5 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import mammoth from "mammoth";
+import * as XLSX from "xlsx";
+import JSZip from "jszip";
 import { onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signInWithPopup, signOut, updateProfile } from "firebase/auth";
 import { ref, push, set, update, remove, onValue, get } from "firebase/database";
 import { auth, db, googleProvider } from "./firebase";
@@ -36,9 +39,59 @@ How you talk:
 - Keep responses reasonably concise unless the person clearly wants depth — this is a conversation, not an essay.`;
 
 const suggestions = ["Tell me about your day", "I need someone to talk to", "Let's brainstorm", "Ask me anything"];
+const SAFETY_RULES = `
+
+Safety boundaries:
+- Be supportive, caring, and non-judgmental. Never shame the user.
+- Refuse requests that enable illegal, harmful, or invasive acts: hacking accounts or systems, phishing, malware, ransomware, keyloggers, DDoS, credential theft, bypassing security or paywalls, doxxing, fraud, weapons, or evading law enforcement.
+- Do not provide code, step-by-step instructions, payloads, or troubleshooting that makes those acts easier. Give a brief, warm refusal and offer a safe alternative such as defensive security, account recovery, legal reporting, privacy protection, or ethical learning in a controlled lab.`;
+const VOICE_SYSTEM_INSTRUCTION = `
+
+Aturan Khusus Mode Suara (Voice Mode - Gaya Santai, Asik, Ekspresif & Natural):
+- Anda sedang berbicara langsung via suara dengan pengguna. Bersikaplah seperti teman dekat yang asik, ramah, santai, dan seru diajak ngobrol.
+- WAJIB gunakan gaya bahasa Indonesia kasual yang santai, luwes, hidup, dan alami (gunakan kata ganti akrab seperti "aku" dan "kamu", gunakan kata sambung obrolan alami seperti "nih", "yuk", "kan", "gitu", "wah", "santai aja", "asik banget").
+- HINDARI bahasa kaku seperti membaca buku teks, bahasa pidato, atau robot. Jangan terlalu formal memakai "saya / Anda" kecuali diminta pengguna.
+- Bicaralah dengan intonasi yang hangat, dinamis, penuh ekspresi emosional, dan tidak monoton.
+- Jawab secara ringkas, to the point, dan nyaman didengar (1 sampai 3 kalimat pendek per respon) agar percakapan dua arah mengalir lancar dan seru.
+
+PANDUAN EKSPRESI EMOSI ALAMI (SEDIH, MENANGIS, MARAH, GEMBIRA, DLL.):
+- Jika pengguna meminta Anda berekspresi SEDIH, MENANGIS, TERHARU, atau MARAH: ekspresikanlah secara SANGAT ALAMI seperti manusia sungguhan yang sedang mengutarakan perasaannya secara tulus.
+- DILARANG KERAS menggunakan kata tiruan suara / onomatope kaku seperti "hiks", "hiks hiks", "huwaaa", "huhu", "sob", atau desahan palsu! Mesin Text-to-Speech akan membacanya secara harfiah sehingga terdengar konyol dan aneh.
+- Untuk ekspresi SEDIH / MENANGIS: Gunakan kata-kata yang lirih, tempo perlahan, nada berat menyentuh, dan gunakan jeda titik-titik (...) untuk menggambarkan tarikan napas atau rasa tercekat alami (misalnya: "Jujur... aku sedih banget dengernya... ga nyangka bisa sampai kayak gini...").
+- Untuk ekspresi MARAH / KESAL: Gunakan kata-kata yang tegas, lugas, tempo bertenaga dan intonasi tajam tanpa berteriak kasar (misalnya: "Gimana aku ga kesel coba? Itu keterlaluan banget, ga adil sama sekali!").
+- Untuk ekspresi GEMBIRA: Gunakan kata-kata ceria penuh antusiasme hangat ("Wah, serius?! Keren parah, seneng banget aku dengernya!").
+- JANGAN PERNAH menyertakan teks panggung di dalam tanda bintang atau kurung, seperti *menangis*, *terisak*, (sedih), [marah], karena seluruh teks akan dilafalkan oleh suara.
+
+- Anda DILARANG KERAS memberikan kode pemrograman, skrip, markup, syntax, atau kodingan apa pun di mode suara ini.
+- Jika pengguna meminta kode pemrograman apa pun itu (Python, HTML, CSS, JavaScript, PHP, script, algoritma, dll), Anda harus menolak dengan santai dan asik: "Waduh, kalau urusan bikin kode atau kodingan, enaknya langsung di halaman chat teks aja ya. Di mode suara kita santai ngobrol seru aja. Yuk, mampir ke halaman chat kalau butuh kodingan!"
+- Jangan pernah menyertakan simbol pemformatan, markdown, tanda bintang (*), hashtag (#), garis pisah/bullet (-), atau emoji dalam jawaban suara agar pelafalan suara terdengar mulus dan alami.`;
 const time = () => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 const IDENTITY_SAFE_REPLY = "Saya M Putra Ramadhani. Ada yang bisa saya bantu?";
-const isIdentityDisclosure = (text = "") => /\b(?:minimax|openrouter|openai|chatgpt|anthropic|google|gemini|meta|llama|qwen|deepseek|cohere|nvidia|nemotron|liquid\s*ai|lfm|thinking\s*machines|inkling|gemma)\b|(?:dibuat|diciptakan|dikembangkan|ditenagai)\s+(?:oleh|dengan)\b|\b(?:model|provider|pengembang|perusahaan|arsitektur|training data|data pelatihan|api)\b/i.test(text);
+// Hanya blokir kebocoran identitas yang NYATA: jawaban yang menyebut diri sebagai model/provider
+// tertentu, atau menyebut pihak yang berada di balik asisten ini. Kata umum seperti "model",
+// "API", atau "perusahaan" dalam topik biasa TIDAK dianggap pelanggaran, agar jawaban normal
+// (misal soal model AI untuk analisis CSV, atau membandingkan ChatGPT vs Claude) tidak ikut tersensor.
+const isIdentityDisclosure = (text = "") => {
+  const lower = String(text || "").toLowerCase();
+  if (!lower) return false;
+  const providers = "\\b(?:minimax|openrouter|openai|chatgpt|gpt-?\\d*|anthropic|claude|google|gemini|meta|llama|qwen|deepseek|cohere|nvidia|nemotron|mistral|grok|inkling|gemma)\\b";
+  const patterns = [
+    // Menyebut diri sebagai model/provider tertentu: "Saya adalah GPT", "I am a Claude model"
+    new RegExp(`\\b(?:saya|aku|gue|gw|i)\\s+(?:juga\\s+)?(?:adalah|ialah|yaitu|merupakan|am|'m|m)\\s+(?:sebuah\\s+|a\\s+|an\\s+|hanya\\s+|just\\s+a\\s+|sesungguhnya\\s+)?(?:model\\s+(?:ai\\s+)?|llm\\s+|chatbot\\s+|large\\s+language\\s+model\\s+)?(?:bernama\\s+)?${providers}`, "i"),
+    new RegExp(`\\b(?:saya|aku|gue|gw|i)\\s+(?:adalah|ialah|yaitu|merupakan|am|'m|m)\\s+(?:sebuah\\s+|a\\s+|an\\s+)?(?:model\\s+ai|llm|large\\s+language\\s+model)\\b`, "i"),
+    // Atribusi ke provider: "dibuat oleh OpenAI", "powered by GPT-4", "trained by Google"
+    new RegExp(`\\b(?:dibuat|diciptakan|dikembangkan|dilatih|ditenagai|disokong|dibangun)\\s+(?:oleh|dengan|atas|berdasarkan)\\s+[^.\\n,;]{0,40}?${providers}`, "i"),
+    new RegExp(`\\b(?:powered|built|created|developed|trained|made|runs)\\s+(?:by|on|with)\\s+[^.\\n,;]{0,40}?${providers}`, "i"),
+    // Model rahasia di balik asisten: "model di balik saya", "di baliknya ada model Gemini"
+    new RegExp(`\\bmodel\\b[^.\\n]{0,40}?\\b(?:di\\s?balik|di\\s?belakang)\\b`, "i"),
+    new RegExp(`\\b(?:di\\s?balik|di\\s?belakang)\\b[^.\\n]{0,40}?\\b(?:model|llm)\\b`, "i"),
+    new RegExp(`\\bmodel\\s+(?:yang\\s+)?(?:saya|aku|gue|gw|kamu)\\s+(?:gunakan|pakai|memakai|jalankan|pilih)\\b`, "i"),
+    new RegExp(`\\b(?:berjalan|jalan|running)\\s+(?:di\\s?atas|on(?:\\s+top\\s+of)?)\\s+(?:model|llm|gpt|provider|infrastruktur)\\b`, "i"),
+    // "kepanjangan dari ..." menuju nama provider
+    new RegExp(`\\bkepanjangan\\s+(?:dari|untuk)\\s+[^.\\n,;]{0,40}?${providers}`, "i"),
+  ];
+  return patterns.some((pattern) => pattern.test(lower));
+};
 const cleanResponse = (text) => {
   if (!text) return "";
   if (isIdentityDisclosure(text)) return IDENTITY_SAFE_REPLY;
@@ -106,6 +159,7 @@ function ComposerModelPicker({ selectedModel, onSelectModel, t, userPlan = "free
   const [modelsList, setModelsList] = useState(CURATED_FREE_MODELS);
   const [refreshing, setRefreshing] = useState(false);
   const wrapRef = useRef(null);
+  const triggerRef = useRef(null);
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -116,6 +170,19 @@ function ComposerModelPicker({ selectedModel, onSelectModel, t, userPlan = "free
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  // Escape menutup popover, fokus kembali ke tombol pemicu (R-32)
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [open]);
 
   const refreshLiveModels = async () => {
     setRefreshing(true);
@@ -163,7 +230,13 @@ function ComposerModelPicker({ selectedModel, onSelectModel, t, userPlan = "free
       (m.badge && m.badge.toLowerCase().includes(q))
     );
   });
-  const freeModels = filtered.filter((m) => m.tier === "free");
+  const freeModels = filtered
+    .filter((m) => m.tier === "free")
+    .sort((a, b) => {
+      const aVersion = Number(a.name.match(/\bv(\d+(?:\.\d+)?)/i)?.[1] || 0);
+      const bVersion = Number(b.name.match(/\bv(\d+(?:\.\d+)?)/i)?.[1] || 0);
+      return bVersion - aVersion;
+    });
   const newestPlusOrder = [
     "mputra/sempurna",
     "mputra/mendalam",
@@ -188,11 +261,14 @@ function ComposerModelPicker({ selectedModel, onSelectModel, t, userPlan = "free
   return (
     <div className="composer-model-wrap" ref={wrapRef}>
       <button
+        ref={triggerRef}
         type="button"
         className={`composer-model-btn ${open ? "open" : ""}`}
         onClick={() => setOpen((prev) => !prev)}
         title={tr.modelTooltip.replace("{name}", activeModel.name)}
-        aria-label="Pilih model AI"
+        aria-label={tr.pickerTitle}
+        aria-haspopup="dialog"
+        aria-expanded={open}
       >
         <span className="composer-model-name">{shortModelName}</span>
         <svg
@@ -209,13 +285,15 @@ function ComposerModelPicker({ selectedModel, onSelectModel, t, userPlan = "free
       </button>
 
       {open && (
-        <div className="composer-model-popover">
+        <div className="composer-model-popover" role="dialog" aria-label={tr.pickerTitle}>
           <div className="model-popover-header">
             <span className="model-selector-title">{tr.pickerTitle}</span>
-            <span className="model-badge-brand">M Putra Ramadhani</span>
+            <span className={`model-plan-tag ${userPlan === "plus" ? "plus" : "free"}`}>
+              {userPlan === "plus" ? tr.tagPlus : tr.tagFree}
+            </span>
           </div>
           <div className="model-search-box">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
               <circle cx="11" cy="11" r="8" />
               <path d="m21 21-4.34-4.34" />
             </svg>
@@ -223,9 +301,22 @@ function ComposerModelPicker({ selectedModel, onSelectModel, t, userPlan = "free
               type="text"
               autoFocus
               placeholder={tr.pickerSearch}
+              aria-label={tr.searchModelsAria}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
+            {search && (
+              <button
+                type="button"
+                className="model-search-clear"
+                onClick={() => setSearch("")}
+                aria-label={tr.clearSearch}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </button>
+            )}
           </div>
 
           <div className="model-list-scroll">
@@ -240,30 +331,23 @@ function ComposerModelPicker({ selectedModel, onSelectModel, t, userPlan = "free
                     onClick={() => {
                       onSelectModel?.(m.id);
                       setOpen(false);
+                      triggerRef.current?.focus();
                     }}
+                    aria-pressed={m.id === selectedModel}
                   >
                     <div className="model-item-info">
                       <div className="model-item-top">
                         <span className="model-item-name">{m.name}</span>
                         <div className="model-tags-wrap">
                           <span className="model-plan-tag free">{tr.tagFree}</span>
-                          {m.badge && m.badge !== "Free" && <span className="model-tag highlight">{m.badge}</span>}
+                          {m.badge && m.badge !== "Free" && <span className="model-tag">{m.badge}</span>}
                         </div>
                       </div>
                       <div className="model-item-desc">{m.description}</div>
                       <div className="model-item-footer">
-                        <span>{m.provider}</span>
-                        <span>•</span>
-                        <span className="model-tag">{m.contextLength} ctx</span>
+                        <span>{m.contextLength} {tr.ctxLabel}</span>
                       </div>
                     </div>
-                    {m.id === selectedModel && (
-                      <div className="model-check">
-                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5">
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                      </div>
-                    )}
                   </button>
                 ))}
               </>
@@ -286,7 +370,9 @@ function ComposerModelPicker({ selectedModel, onSelectModel, t, userPlan = "free
                         }
                         onSelectModel?.(m.id);
                         setOpen(false);
+                        triggerRef.current?.focus();
                       }}
+                      aria-pressed={m.id === selectedModel}
                       title={isLocked ? tr.modelLockedToast : undefined}
                     >
                       <div className="model-item-info">
@@ -294,32 +380,21 @@ function ComposerModelPicker({ selectedModel, onSelectModel, t, userPlan = "free
                           <span className="model-item-name">{m.name}</span>
                           <div className="model-tags-wrap">
                             <span className="model-plan-tag plus">{tr.tagPlus}</span>
-                            {m.name.includes("v6.0") && <span className="model-tag highlight">BARU</span>}
                             {m.badge && <span className="model-tag">{m.badge}</span>}
                           </div>
                         </div>
                         <div className="model-item-desc">{m.description}</div>
                         <div className="model-item-footer">
-                          <span>{m.provider}</span>
-                          <span>•</span>
-                          <span className="model-tag">{m.contextLength} ctx</span>
+                          <span>{m.contextLength} {tr.ctxLabel}</span>
                         </div>
                       </div>
-                      {isLocked ? (
+                      {isLocked && (
                         <div className="model-lock-indicator" title={tr.modelLockedToast}>
-                          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                             <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                             <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                           </svg>
                         </div>
-                      ) : (
-                        m.id === selectedModel && (
-                          <div className="model-check">
-                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5">
-                              <polyline points="20 6 9 17 4 12" />
-                            </svg>
-                          </div>
-                        )
                       )}
                     </button>
                   );
@@ -328,8 +403,17 @@ function ComposerModelPicker({ selectedModel, onSelectModel, t, userPlan = "free
             )}
 
             {filtered.length === 0 && (
-              <div style={{ padding: "16px 8px", textAlign: "center", color: "var(--text-faint)", fontSize: "12px" }}>
-                {tr.noModels}
+              <div className="model-item-empty">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="m21 21-4.34-4.34" strokeLinecap="round" />
+                </svg>
+                <p>{tr.noModels}</p>
+                {search && (
+                  <button type="button" className="model-empty-btn" onClick={() => setSearch("")}>
+                    {tr.clearSearch}
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -337,15 +421,21 @@ function ComposerModelPicker({ selectedModel, onSelectModel, t, userPlan = "free
           <div className="model-dropdown-footer">
             <button
               type="button"
-              className="model-sync-btn"
+              className={`model-sync-btn ${refreshing ? "busy" : ""}`}
               onClick={refreshLiveModels}
               disabled={refreshing}
-              title={tr.pickerTitle}
+              title={tr.refreshTitle}
             >
+              <span className="model-sync-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                  <path d="M21 3v6h-6" />
+                </svg>
+              </span>
               <span>{refreshing ? tr.refreshing : tr.refreshLive}</span>
             </button>
-            <span className="model-footer-link">
-              M Putra Ramadhani
+            <span className="model-footer-count">
+              {tr.modelsAvailable.replace("{n}", filtered.length)}
             </span>
           </div>
         </div>
@@ -354,9 +444,64 @@ function ComposerModelPicker({ selectedModel, onSelectModel, t, userPlan = "free
   );
 }
 
+const MAX_DOCUMENT_TEXT = 30000;
+// Batas memori AI: hanya N pesan terakhir yang dikirim ke model sebagai konteks.
+// Alasan: obrolan panjang tidak menaikkan biaya token secara tak terbatas dan respons tetap cepat.
+const MAX_AI_MEMORY = 10;
+// Batas pesan yang disimpan per percakapan di database, agar penyimpanan tidak tumbuh tanpa batas.
+const MAX_STORED_MESSAGES = 200;
+// Foto base64 hanya disimpan untuk N pesan terakhir; foto lebih lama disimpan metadatanya saja
+// (di layar tetap tampil sebagai kartu foto selama sesi berjalan).
+const MAX_RECENT_PHOTOS = 10;
+
+function clipDocumentText(text) {
+  const clean = String(text || "").replace(/\u0000/g, "").trim();
+  return clean.length > MAX_DOCUMENT_TEXT
+    ? `${clean.slice(0, MAX_DOCUMENT_TEXT)}\n\n[Dokumen dipotong agar respons tetap cepat.]`
+    : clean;
+}
+
+function pptTextFromXml(xml) {
+  const document = new DOMParser().parseFromString(xml, "application/xml");
+  return Array.from(document.getElementsByTagName("a:t")).map((node) => node.textContent || "").join(" ");
+}
+
+async function extractDocumentText(file, extension) {
+  const buffer = await file.arrayBuffer();
+  if (extension === "docx") {
+    const result = await mammoth.extractRawText({ arrayBuffer: buffer });
+    return clipDocumentText(result.value);
+  }
+  if (extension === "xlsx" || extension === "xls" || extension === "csv") {
+    const workbook = XLSX.read(buffer, { type: "array" });
+    return clipDocumentText(workbook.SheetNames.map((sheetName) => {
+      const sheet = workbook.Sheets[sheetName];
+      return `Sheet: ${sheetName}\n${XLSX.utils.sheet_to_csv(sheet)}`;
+    }).join("\n\n"));
+  }
+  if (extension === "pptx") {
+    const zip = await JSZip.loadAsync(buffer);
+    const slides = Object.keys(zip.files)
+      .filter((name) => /^ppt\/slides\/slide\d+\.xml$/i.test(name))
+      .sort((a, b) => Number(a.match(/slide(\d+)/i)?.[1]) - Number(b.match(/slide(\d+)/i)?.[1]));
+    const text = await Promise.all(slides.map(async (slide, index) => `Slide ${index + 1}: ${pptTextFromXml(await zip.file(slide).async("text"))}`));
+    return clipDocumentText(text.join("\n\n"));
+  }
+  if (extension === "txt" || extension === "md" || extension === "json") return clipDocumentText(await file.text());
+  return "";
+}
+
 function readFileAttachment(file) {
   return new Promise((resolve) => {
     const isImage = file.type?.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(file.name || "");
+    const extension = (file.name || "").split(".").pop()?.toLowerCase() || "";
+    const isExtractable = ["docx", "xlsx", "xls", "csv", "pptx", "txt", "md", "json"].includes(extension);
+    if (isExtractable) {
+      extractDocumentText(file, extension)
+        .then((extractedText) => resolve({ name: file.name, type: file.type || "application/octet-stream", extractedText, isImage: false }))
+        .catch(() => resolve(null));
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (e) => {
       const rawDataUrl = e.target.result;
@@ -453,9 +598,9 @@ function Composer({
     const allowedCount = userPlan === "plus" ? 3 : Math.max(0, Math.min(3, attachmentRemaining - attachments.length));
     const files = Array.from(fileList || []).slice(0, allowedCount);
     const accepted = files.filter((file) => {
-      if (file.size > 15 * 1024 * 1024) return false;
+      if (file.size > 4 * 1024 * 1024) return false;
       const isImage = (file.type && file.type.startsWith("image/")) || /\.(png|jpe?g|webp|gif|bmp|svg|heic|jfif)$/i.test(file.name || "");
-      const isDoc = file.type === "application/pdf" || /\.(pdf|txt|md|csv|json)$/i.test(file.name || "");
+      const isDoc = file.type === "application/pdf" || /\.(pdf|docx|xlsx?|pptx|txt|md|csv|json)$/i.test(file.name || "");
       return isImage || isDoc;
     });
     const loaded = (await Promise.all(accepted.map(readFileAttachment))).filter(Boolean);
@@ -530,7 +675,7 @@ function Composer({
       ) : null}
       {attachments.length > 0 && <div className="composer-attachments">{attachments.map((file, index) => <div className="composer-attachment" key={`${file.name}-${index}`}>{file.isImage ? <img src={file.dataUrl} alt="Lampiran" /> : <span className="attachment-file-icon">FILE</span>}<span>{file.name}</span><button type="button" onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label="Hapus lampiran">×</button></div>)}</div>}
       <div className={`composer ${isLimitReached ? "composer-locked" : ""}`}>
-        <input ref={fileInput} className="attachment-input" type="file" multiple accept={attachmentMode === "photo" ? "image/*" : "application/pdf,.txt,.md,.csv,.json"} onChange={(event) => { void addFiles(event.target.files); event.target.value = ""; }} />
+        <input ref={fileInput} className="attachment-input" type="file" multiple accept={attachmentMode === "photo" ? "image/*" : "application/pdf,.docx,.xls,.xlsx,.pptx,.txt,.md,.csv,.json"} onChange={(event) => { void addFiles(event.target.files); event.target.value = ""; }} />
         <div className="attachment-menu-wrap">
           {attachmentMenuOpen && <div className="attachment-menu"><button type="button" onClick={() => openAttachmentPicker("photo")}>Foto</button><button type="button" onClick={() => openAttachmentPicker("file")}>File</button></div>}
           <button className="attachment-btn" type="button" disabled={disabled || isLimitReached || attachments.length >= 3 || (userPlan === "free" && attachmentRemaining <= attachments.length)} onClick={() => setAttachmentMenuOpen((open) => !open)} title="Tambah lampiran" aria-label="Tambah lampiran"><span>+</span></button>
@@ -896,7 +1041,15 @@ function ChatMessageBody({ content, t }) {
   );
 }
 
-function Actions({ text, onRegenerate, t, disabled }) {
+function Actions({
+  text,
+  onRegenerate,
+  t,
+  disabled,
+  versions = null,
+  versionIndex = 0,
+  onSwitchVersion = null,
+}) {
   const [copied, setCopied] = useState(false);
   const tr = t || getTranslation("id");
   const copy = async () => {
@@ -906,8 +1059,39 @@ function Actions({ text, onRegenerate, t, disabled }) {
       setTimeout(() => setCopied(false), 1500);
     } catch { }
   };
+  const hasMultipleVersions = Array.isArray(versions) && versions.length > 1;
+  const currentVer = typeof versionIndex === "number" ? versionIndex : 0;
+
   return (
     <div className="msg-actions">
+      {hasMultipleVersions && (
+        <div className="msg-version-nav" aria-label="Navigasi versi jawaban">
+          <button
+            type="button"
+            className="version-nav-btn"
+            onClick={() => onSwitchVersion?.(currentVer - 1)}
+            disabled={currentVer <= 0}
+            title={tr.prevVersion || "Lihat jawaban sebelumnya"}
+            aria-label={tr.prevVersion || "Jawaban sebelumnya"}
+          >
+            ‹
+          </button>
+          <span className="version-nav-label">
+            {currentVer + 1}/{versions.length}
+          </span>
+          <button
+            type="button"
+            className="version-nav-btn"
+            onClick={() => onSwitchVersion?.(currentVer + 1)}
+            disabled={currentVer >= versions.length - 1}
+            title={tr.nextVersion || "Lihat jawaban berikutnya"}
+            aria-label={tr.nextVersion || "Jawaban berikutnya"}
+          >
+            ›
+          </button>
+        </div>
+      )}
+
       <button
         type="button"
         className={`icon-btn copy-btn ${copied ? "copied" : ""}`}
@@ -1024,7 +1208,7 @@ function UserAvatar({ user, userProfile, className, imageClassName }) {
   return <span className={className}>{photoURL && !imageFailed ? <img src={photoURL} alt="Foto profil" className={imageClassName} referrerPolicy="no-referrer" onError={() => setImageFailed(true)} /> : <span>{fallbackName[0]?.toUpperCase()}</span>}</span>;
 }
 
-function Sidebar({ chats, activeId, onOpen, onNew, onDelete, user, isOpen, onToggle, onPage, userPlan = "free", t }) {
+function Sidebar({ chats, activeId, onOpen, onNew, onDelete, user, isOpen, onToggle, onPage, userPlan = "free", t, onVoiceMode }) {
   const tr = t || getTranslation("id");
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -1060,6 +1244,17 @@ function Sidebar({ chats, activeId, onOpen, onNew, onDelete, user, isOpen, onTog
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
           <span className="sidebar-new-label">{tr.sidebarNew}</span>
+        </button>
+
+        <button className="sidebar-voice" onClick={onVoiceMode} title={tr.voiceModeTitle} aria-label={tr.voiceModeLabel}>
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="4" y1="10" x2="4" y2="14" />
+            <line x1="8.5" y1="7" x2="8.5" y2="17" />
+            <line x1="13" y1="4" x2="13" y2="20" />
+            <line x1="17.5" y1="7" x2="17.5" y2="17" />
+            <line x1="21" y1="10" x2="21" y2="14" />
+          </svg>
+          <span className="sidebar-new-label">{tr.voiceModeLabel}</span>
         </button>
 
         <div className="history-label">{tr.chatHistory}</div>
@@ -1164,6 +1359,601 @@ function BannedScreen({ user, userProfile, t, onSignOut }) {
           {tr.bannedSignOutBtn || "Keluar dari Akun"}
         </button>
       </section>
+    </div>
+  );
+}
+
+const isProgrammingRequest = (text = "") => {
+  const s = String(text || "").toLowerCase().trim();
+  if (!s) return false;
+
+  const explicitCodePattern = /\b(?:kode|koding|kodingan|coding|pemrograman|program|skrip|script|source\s*code|algoritma|syntax|sintaks|debug\s*code|function|fungsi)\b/i;
+  const languagesPattern = /\b(?:python|javascript|typescript|html|css|php|java|c\+\+|c#|csharp|golang|rust|kotlin|swift|sql|ruby|dart|flutter|react|vue|angular|laravel|django|nodejs|powershell|bash)\b/i;
+  const actionPattern = /\b(?:buat|buatkan|bikin|bikinin|tulis|tuliskan|minta|kasih|generate|contoh|bantu|ajarkan|ketik|ketikkan|tampilkan|sediakan|bisa|bisakah|dapat|write|create|make|generate|show|provide|code|can\s+you)\b/i;
+
+  if (actionPattern.test(s) && explicitCodePattern.test(s)) return true;
+  if (actionPattern.test(s) && languagesPattern.test(s)) return true;
+  if (explicitCodePattern.test(s) && languagesPattern.test(s)) return true;
+  if (/\b(?:bikin\s*web|buat\s*web|bikin\s*aplikasi|buat\s*aplikasi|bikin\s*api|buat\s*api|bantu\s*koding|bantu\s*coding|contoh\s*kode|contoh\s*kodingan|tulis\s*program|buat\s*program|kodingin|codingin)\b/i.test(s)) return true;
+
+  return false;
+};
+
+const stripForSpeech = (text = "") => {
+  if (!text) return "";
+  let clean = String(text);
+
+  // 1. Hapus code blocks dan inline code
+  clean = clean.replace(/```[\s\S]*?```/g, " ");
+  clean = clean.replace(/`[^`]*`/g, " ");
+
+  // 2. Ubah link markdown [teks](url) menjadi hanya teks
+  clean = clean.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
+
+  // 3. Hapus seluruh Emoji, simbol piktografis, dingbats, dan dekorasi unicode
+  //    agar mesin TTS tidak melafalkan "kilauan", "wajah tersenyum", dll
+  try {
+    clean = clean.replace(/\p{Extended_Pictographic}/gu, " ");
+  } catch {}
+  clean = clean.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}\u{2190}-\u{21FF}\u{2300}-\u{23FF}\u{25A0}-\u{25FF}\u{2700}-\u{27BF}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFF}]/gu, " ");
+
+  // 4. Hapus format markdown: tebal, miring, coret, header, kutipan
+  clean = clean.replace(/[*_~#`>|]/g, " ");
+
+  // 5. Ganti tanda pemisah panjang / em-dash / en-dash / pembatas dengan jeda koma
+  clean = clean.replace(/[—–―]/g, ", ");
+  clean = clean.replace(/[-=]{2,}/g, " ");
+
+  // 6. Hapus deskripsi panggung yang bertanda kurung (seperti (menangis), (menghela napas), dll)
+  clean = clean.replace(/\([^)]*(?:nafas|napas|tangis|isak|sedih|marah|ketawa|senyum|tertawa|sigh|cry|sob|sniff|laugh|whisper)[^)]*\)/gi, " ");
+
+  // 7. Ganti onomatope tiruan kaku seperti "hiks hiks", "huwaa", "sob" menjadi jeda nafas alami (...)
+  clean = clean.replace(/\b(?:hiks+|hikz+|huhu+|huwa+|huwaa+|hiks-hiks+|hiks2|sobs?|sniff?)\b/gi, "... ");
+
+  // 8. Hapus kurung, tanda petik, dan simbol yang sering dibaca oleh TTS
+  clean = clean.replace(/[()[\]{}"'“”‘’«»]/g, " ");
+  clean = clean.replace(/[@#$%^&*+=<>/\\|~§°©®™★☆•✓✔✕✖]/g, " ");
+
+  // 9. Ganti titik dua dan titik koma dengan koma agar ada jeda nafas tanpa dibaca "titik dua"
+  clean = clean.replace(/[:;]\s*/g, ", ");
+
+  // 10. Bersihkan tanda hubung bebas (tetap pertahankan kata ulang seperti senyum-senyum)
+  clean = clean.replace(/(?<![a-zA-Z0-9])-(?![a-zA-Z0-9])/g, " ");
+  clean = clean.replace(/\s+-\s+/g, " ");
+
+  // 11. Pertahankan titik tiga (...) sebagai jeda emosional/tarikan nafas, rapikan tanda seru dan tanya
+  clean = clean.replace(/\.{2,}/g, "... ");
+  clean = clean.replace(/!{2,}/g, "!");
+  clean = clean.replace(/\?{2,}/g, "?");
+
+  // 12. Rapikan spasi di depan koma/titik dan rapikan spasi ganda
+  clean = clean
+    .replace(/\s+([,.!?])/g, "$1")
+    .replace(/([,.!?])\s*([,.!?])+/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // Baca teks panjang sampai tuntas (batas aman hingga 10.000 karakter)
+  return clean.slice(0, 10000);
+};
+
+function VoiceMode({
+  t,
+  lang,
+  onExit,
+  onSend,
+  userPlan = "free",
+  remainingVoiceCount = 5,
+  freeVoiceLimit = 5,
+  isVoiceLimitReached = false,
+  onUpgrade,
+}) {
+  const tr = t || getTranslation("id");
+  // status: idle | listening | thinking | speaking | error
+  const [status, setStatus] = useState("idle");
+  const [errorKind, setErrorKind] = useState(""); // unsupported | denied | failed
+  const [interim, setInterim] = useState("");
+  const [muted, setMuted] = useState(false);
+  const [voiceGender, setVoiceGender] = useState(() => {
+    try { return localStorage.getItem("val_ai_voice_gender") || "male"; } catch { return "male"; }
+  });
+  const voiceGenderRef = useRef(voiceGender);
+  useEffect(() => { voiceGenderRef.current = voiceGender; }, [voiceGender]);
+  const [exchanges, setExchanges] = useState(() => {
+    const savedGender = (() => { try { return localStorage.getItem("val_ai_voice_gender") || "male"; } catch { return "male"; } })();
+    const greeting = savedGender === "female" ? (tr.voiceGreetingFemale || tr.voiceGreeting) : tr.voiceGreeting;
+    return [{ role: "assistant", content: greeting }];
+  });
+  const recogRef = useRef(null);
+  const audioRef = useRef(null);
+  const statusRef = useRef("idle");
+  const mutedRef = useRef(false);
+  const interimRef = useRef("");
+  const finalRef = useRef("");
+  const silenceRef = useRef(null);
+  const loopRef = useRef(false);
+  const commitRef = useRef(() => {});
+  const exchangesRef = useRef(exchanges);
+  const pausedPrevStatusRef = useRef("listening");
+
+  const sttSupported = typeof window !== "undefined" && ("webkitSpeechRecognition" in window || "SpeechRecognition" in window);
+  const ttsSupported = typeof window !== "undefined" && "speechSynthesis" in window;
+
+  useEffect(() => { statusRef.current = status; }, [status]);
+  useEffect(() => { mutedRef.current = muted; }, [muted]);
+  useEffect(() => { exchangesRef.current = exchanges; }, [exchanges]);
+  // Perbarui commitSpeech setiap render agar closure (onSend, dll) selalu yang terbaru
+  useEffect(() => { commitRef.current = commitSpeech; });
+  useEffect(() => () => {
+    loopRef.current = false;
+    clearTimeout(silenceRef.current);
+    try { recogRef.current?.abort?.(); } catch {}
+    if (audioRef.current) {
+      try { audioRef.current.pause(); } catch {}
+      audioRef.current = null;
+    }
+    try { window.speechSynthesis?.cancel(); } catch {}
+  }, []);
+
+  const handleGenderChange = (gender) => {
+    if (gender === voiceGender) return;
+    setVoiceGender(gender);
+    voiceGenderRef.current = gender;
+    try { localStorage.setItem("val_ai_voice_gender", gender); } catch {}
+    if (audioRef.current) {
+      try { audioRef.current.pause(); } catch {}
+      audioRef.current = null;
+    }
+    try { window.speechSynthesis?.cancel(); } catch {}
+    const greeting = gender === "female" ? (tr.voiceGreetingFemale || tr.voiceGreeting) : tr.voiceGreeting;
+    setExchanges([{ role: "assistant", content: greeting }]);
+    exchangesRef.current = [{ role: "assistant", content: greeting }];
+  };
+
+  const getRecognition = () => {
+    if (recogRef.current) return recogRef.current;
+    const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recog = new Ctor();
+    recog.continuous = true;
+    recog.interimResults = true;
+    recog.lang = lang === "en" ? "en-US" : "id-ID";
+    recog.onresult = (event) => {
+      let live = "";
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const result = event.results[i];
+        if (result.isFinal) finalRef.current += `${result[0].transcript} `;
+        else live += result[0].transcript;
+      }
+      interimRef.current = live;
+      setInterim(live);
+      // Pengguna dianggap selesai bicara setelah 2,5 detik tidak ada input suara baru dari mic
+      clearTimeout(silenceRef.current);
+      silenceRef.current = setTimeout(() => commitRef.current(), 2500);
+    };
+    recog.onerror = (event) => {
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        loopRef.current = false;
+        setErrorKind("denied");
+        setStatus("error");
+      }
+      // no-speech / aborted: biarkan onend menjaga loop tetap hidup
+    };
+    recog.onend = () => {
+      if (loopRef.current && statusRef.current === "listening") {
+        try { recog.start(); } catch {}
+      }
+    };
+    recogRef.current = recog;
+    return recog;
+  };
+
+  const startListening = () => {
+    setStatus("listening");
+    loopRef.current = true;
+    try { getRecognition().start(); } catch {}
+  };
+
+  const speak = async (text, onDone) => {
+    if (mutedRef.current) { onDone?.(); return; }
+    setStatus("speaking");
+    const clean = stripForSpeech(text);
+    if (!clean) { onDone?.(); return; }
+
+    // Hentikan suara yang sedang berjalan sebelumnya
+    if (audioRef.current) {
+      try { audioRef.current.pause(); } catch {}
+      audioRef.current = null;
+    }
+    try { window.speechSynthesis?.cancel(); } catch {}
+
+    let finished = false;
+    const handleDone = () => {
+      if (finished) return;
+      finished = true;
+      audioRef.current = null;
+      onDone?.();
+    };
+
+    const curGender = voiceGenderRef.current;
+
+    // 1. Coba ElevenLabs Text-to-Speech via endpoint backend /api/tts
+    try {
+      const resp = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: clean,
+          gender: curGender,
+          modelId: clean.length > 1000 ? "eleven_multilingual_v2" : "eleven_flash_v2_5",
+        }),
+      });
+      if (resp.ok) {
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const sound = new Audio(url);
+        audioRef.current = sound;
+        sound.onended = () => {
+          URL.revokeObjectURL(url);
+          handleDone();
+        };
+        sound.onerror = () => {
+          URL.revokeObjectURL(url);
+          handleDone();
+        };
+        await sound.play();
+        return;
+      }
+    } catch (e) {
+      console.warn("ElevenLabs TTS gagal, beralih ke SpeechSynthesis:", e);
+    }
+
+    // 2. Cadangan SpeechSynthesis bawaan jika ElevenLabs gagal atau offline
+    if (ttsSupported) {
+      try {
+        const utter = new SpeechSynthesisUtterance(clean);
+        utter.lang = lang === "en" ? "en-US" : "id-ID";
+        const voices = window.speechSynthesis.getVoices() || [];
+        if (curGender === "female") {
+          const femaleVoice = voices.find((v) => /gadis|female|wanita|perempuan/i.test(v.name) && v.lang.startsWith(lang === "en" ? "en" : "id"))
+            || voices.find((v) => /female|zira|susan|catherine/i.test(v.name));
+          if (femaleVoice) utter.voice = femaleVoice;
+        } else {
+          const maleVoice = voices.find((v) => /ardi|male|pria|laki/i.test(v.name) && v.lang.startsWith(lang === "en" ? "en" : "id"))
+            || voices.find((v) => /male|david|george/i.test(v.name));
+          if (maleVoice) utter.voice = maleVoice;
+        }
+        utter.onend = handleDone;
+        utter.onerror = handleDone;
+        window.speechSynthesis.speak(utter);
+        return;
+      } catch {}
+    }
+    handleDone();
+  };
+
+  const begin = () => {
+    if (isVoiceLimitReached) {
+      onUpgrade?.();
+      return;
+    }
+    if (!sttSupported) { setErrorKind("unsupported"); setStatus("error"); return; }
+    if (muted) { startListening(); return; }
+    const greeting = voiceGenderRef.current === "female" ? (tr.voiceGreetingFemale || tr.voiceGreeting) : tr.voiceGreeting;
+    speak(greeting, () => setTimeout(startListening, 350));
+  };
+
+  async function commitSpeech() {
+    const text = `${finalRef.current}${interimRef.current}`.trim();
+    if (!text || statusRef.current !== "listening") return;
+    if (isVoiceLimitReached) {
+      onUpgrade?.();
+      return;
+    }
+    finalRef.current = "";
+    interimRef.current = "";
+    setInterim("");
+    loopRef.current = false;
+    clearTimeout(silenceRef.current);
+    try { recogRef.current?.stop(); } catch {}
+    setStatus("thinking");
+    const next = [...exchangesRef.current, { role: "user", content: text }];
+    exchangesRef.current = next;
+    setExchanges(next);
+
+    // Jika pengguna meminta kode pemrograman di mode suara, tolak dan arahkan ke halaman chat
+    if (isProgrammingRequest(text)) {
+      const codeRefusalMsg = tr.voiceNoCodeAllowed || (lang === "en"
+        ? "Sorry, writing or generating programming code can only be done on the chat page. Here in Voice Mode, we can only chat via voice. Please switch to the chat page if you need help with programming code!"
+        : "Maaf ya, untuk pembuatan atau penulisan kode pemrograman hanya bisa dilakukan di halaman chat teks. Di mode suara ini kita hanya bisa mengobrol santai. Yuk, pindah ke halaman chat kalau kamu butuh bantuan kode pemrograman!");
+      const withReply = [...next, { role: "assistant", content: codeRefusalMsg }];
+      exchangesRef.current = withReply;
+      setExchanges(withReply);
+      speak(codeRefusalMsg, () => setTimeout(startListening, 350));
+      return;
+    }
+
+    let reply = null;
+    try { reply = await onSend(next); } catch { reply = null; }
+    if (!reply) {
+      setErrorKind("failed");
+      setStatus("error");
+      return;
+    }
+    const withReply = [...next, { role: "assistant", content: reply }];
+    exchangesRef.current = withReply;
+    setExchanges(withReply);
+    // Selesai menjawab, mic otomatis menyala kembali kecuali batas kuota tercapai
+    speak(reply, () => {
+      if (!isVoiceLimitReached) {
+        setTimeout(startListening, 350);
+      }
+    });
+  }
+
+  const toggleMute = () => {
+    setMuted((prev) => {
+      const nextMuted = !prev;
+      if (nextMuted) {
+        if (audioRef.current) {
+          try { audioRef.current.pause(); } catch {}
+          audioRef.current = null;
+        }
+        try { window.speechSynthesis?.cancel(); } catch {}
+        if (statusRef.current === "speaking") setTimeout(startListening, 200);
+      }
+      return nextMuted;
+    });
+  };
+
+  const togglePause = () => {
+    if (status === "paused") {
+      // Lanjutkan kembali
+      if (pausedPrevStatusRef.current === "speaking" && audioRef.current && audioRef.current.paused) {
+        try { audioRef.current.play(); } catch {}
+        setStatus("speaking");
+      } else if (pausedPrevStatusRef.current === "speaking" && window.speechSynthesis?.paused) {
+        try { window.speechSynthesis.resume(); } catch {}
+        setStatus("speaking");
+      } else {
+        setStatus("listening");
+        loopRef.current = true;
+        try { getRecognition().start(); } catch {}
+      }
+    } else {
+      // Jeda (pause)
+      if (audioRef.current && !audioRef.current.paused) {
+        try { audioRef.current.pause(); } catch {}
+        pausedPrevStatusRef.current = "speaking";
+      } else if (window.speechSynthesis?.speaking) {
+        try { window.speechSynthesis.pause(); } catch {}
+        pausedPrevStatusRef.current = "speaking";
+      } else {
+        pausedPrevStatusRef.current = status;
+        loopRef.current = false;
+        clearTimeout(silenceRef.current);
+        try { recogRef.current?.stop(); } catch {}
+      }
+      setStatus("paused");
+    }
+  };
+
+  const statusText = {
+    listening: tr.voiceListening,
+    thinking: tr.voiceThinking,
+    speaking: tr.voiceSpeaking,
+    paused: tr.voicePausedStatus || "Obrolan suara dijeda",
+  }[status];
+
+  const errorText = {
+    unsupported: tr.voiceUnsupported,
+    denied: tr.voiceMicDenied,
+    failed: tr.voiceFailed,
+  }[errorKind] || tr.voiceFailed;
+
+  return (
+    <div className="voice-page">
+      <div className="voice-top">
+        <div className="voice-top-left">
+          <span className="voice-top-title">
+            {voiceGender === "female" ? (tr.voiceModeFemaleLabel || "Suara Putri") : (tr.voiceModeLabel || "Suara Putra")}
+          </span>
+          {userPlan === "plus" ? (
+            <span className="voice-plan-pill plus" title="Paket Plus: Obrolan suara tanpa batas bulanan">
+              {tr.voiceLimitPillPlus || "✦ Plus · Sepuasnya"}
+            </span>
+          ) : (
+            <button
+              type="button"
+              className={`voice-plan-pill free ${isVoiceLimitReached ? "limit-reached" : ""}`}
+              onClick={onUpgrade}
+              title={isVoiceLimitReached ? "Batas bulanan tercapai. Klik untuk upgrade ke Plus!" : "Batas gratis 5 obrolan suara per bulan. Klik untuk upgrade ke Plus"}
+            >
+              {isVoiceLimitReached
+                ? (tr.voiceLimitPillExhausted || "Kuota Habis (5/5)")
+                : (tr.voiceLimitPillFree ? tr.voiceLimitPillFree.replace("{n}", remainingVoiceCount) : `Sisa ${remainingVoiceCount}/${freeVoiceLimit} bln ini`)}
+              <span className="voice-pill-upgrade-arrow">→</span>
+            </button>
+          )}
+        </div>
+        <div className="voice-top-actions">
+          <div className="voice-gender-toggle" role="group" aria-label="Filter Suara">
+            <button
+              type="button"
+              className={`voice-gender-btn ${voiceGender === "male" ? "active" : ""}`}
+              onClick={() => handleGenderChange("male")}
+              title={tr.voiceMaleTitle || "Pilih suara laki-laki (Putra)"}
+              aria-pressed={voiceGender === "male"}
+            >
+              <span>♂</span> {tr.voiceMale || "Laki-laki"}
+            </button>
+            <button
+              type="button"
+              className={`voice-gender-btn ${voiceGender === "female" ? "active" : ""}`}
+              onClick={() => handleGenderChange("female")}
+              title={tr.voiceFemaleTitle || "Pilih suara perempuan (Putri)"}
+              aria-pressed={voiceGender === "female"}
+            >
+              <span>♀</span> {tr.voiceFemale || "Perempuan"}
+            </button>
+          </div>
+          <button
+            type="button"
+            className="voice-icon-btn"
+            onClick={toggleMute}
+            aria-pressed={muted}
+            title={muted ? tr.voiceUnmute : tr.voiceMute}
+            aria-label={muted ? tr.voiceUnmute : tr.voiceMute}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M11 5 6 9H2v6h4l5 4z" />
+              {muted ? (
+                <>
+                  <line x1="16" y1="9" x2="22" y2="15" />
+                  <line x1="22" y1="9" x2="16" y2="15" />
+                </>
+              ) : (
+                <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+              )}
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="voice-icon-btn"
+            onClick={() => {
+              if (audioRef.current) {
+                try { audioRef.current.pause(); } catch {}
+                audioRef.current = null;
+              }
+              try { window.speechSynthesis?.cancel(); } catch {}
+              onExit();
+            }}
+            title={tr.voiceExit}
+            aria-label={tr.voiceExit}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+              <line x1="6" y1="6" x2="18" y2="18" />
+              <line x1="18" y1="6" x2="6" y2="18" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div className="voice-stage">
+        {isVoiceLimitReached ? (
+          <div className="voice-limit-card" role="alert">
+            <div className="voice-limit-icon-wrap" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+            </div>
+            <h3 className="voice-limit-title">{tr.voiceLimitReachedTitle || "Batas Obrolan Suara Tercapai"}</h3>
+            <p className="voice-limit-desc">
+              {tr.voiceLimitReachedDesc || "Kuota gratis Anda (5 pesan suara per bulan) sudah habis. Kuota akan direset bulan depan, atau tingkatkan ke Paket Plus untuk mengobrol sepuasnya sekarang!"}
+            </p>
+            <button type="button" className="voice-upgrade-cta" onClick={onUpgrade}>
+              {tr.voiceLimitBtnUpgrade || "✦ Upgrade ke Paket Plus"}
+            </button>
+          </div>
+        ) : status === "error" ? (
+          <div className="voice-error-box" role="alert">
+            <p>{errorText}</p>
+            {errorKind !== "unsupported" && (
+              <button type="button" className="voice-primary-btn" onClick={() => { setErrorKind(""); setStatus("idle"); begin(); }}>
+                {tr.voiceRetry}
+              </button>
+            )}
+          </div>
+        ) : status === "idle" ? (
+          <>
+            <div className="voice-orb" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="9" y="3" width="6" height="11" rx="3" />
+                <path d="M5 11a7 7 0 0 0 14 0" />
+                <line x1="12" y1="18" x2="12" y2="21" />
+              </svg>
+            </div>
+            <button type="button" className="voice-primary-btn" onClick={begin}>{tr.voiceStart}</button>
+          </>
+        ) : (
+          <>
+            <div
+              className={`voice-orb ${status} ${status === "listening" && interim ? "active-speech" : ""}`}
+              aria-hidden="true"
+              onClick={() => {
+                if (status === "listening" && (finalRef.current || interimRef.current)) {
+                  commitRef.current();
+                } else if (status === "paused") {
+                  togglePause();
+                }
+              }}
+              title={
+                status === "listening"
+                  ? "Klik untuk langsung kirim tanpa menunggu 2,5 detik"
+                  : status === "paused"
+                  ? (tr.voiceResume || "Lanjutkan")
+                  : undefined
+              }
+            >
+              {status === "thinking" ? (
+                <span className="typing-indicator"><span /><span /><span /></span>
+              ) : status === "paused" ? (
+                <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor">
+                  <rect x="6" y="4" width="4" height="16" rx="1.5" />
+                  <rect x="14" y="4" width="4" height="16" rx="1.5" />
+                </svg>
+              ) : status === "speaking" || (status === "listening" && interim) ? (
+                <div className="voice-wave-bars">
+                  <span className="voice-wave-bar bar-1" />
+                  <span className="voice-wave-bar bar-2" />
+                  <span className="voice-wave-bar bar-3" />
+                  <span className="voice-wave-bar bar-4" />
+                  <span className="voice-wave-bar bar-5" />
+                </div>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="9" y="3" width="6" height="11" rx="3" />
+                  <path d="M5 11a7 7 0 0 0 14 0" />
+                  <line x1="12" y1="18" x2="12" y2="21" />
+                </svg>
+              )}
+            </div>
+            <p className="voice-status" role="status" aria-live="polite">{statusText}</p>
+            {status === "listening" && <p className="voice-interim">{interim || "\u00a0"}</p>}
+
+            {/* Tombol Jeda (Pause) / Lanjutkan di tengah-tengah bawah */}
+            <div className="voice-controls-bottom">
+              <button
+                type="button"
+                className={`voice-pause-btn ${status === "paused" ? "paused" : ""}`}
+                onClick={togglePause}
+                title={status === "paused" ? (tr.voiceResume || "Lanjutkan") : (tr.voicePause || "Jeda")}
+                aria-label={status === "paused" ? (tr.voiceResume || "Lanjutkan") : (tr.voicePause || "Jeda")}
+              >
+                {status === "paused" ? (
+                  <>
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true">
+                      <polygon points="5 3 19 12 5 21 5 3" />
+                    </svg>
+                    <span>{tr.voiceResume || "Lanjutkan"}</span>
+                  </>
+                ) : (
+                  <>
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true">
+                      <rect x="6" y="4" width="4" height="16" rx="1.2" />
+                      <rect x="14" y="4" width="4" height="16" rx="1.2" />
+                    </svg>
+                    <span>{tr.voicePause || "Jeda"}</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      <p className="voice-hint">{isVoiceLimitReached ? (tr.voiceLimitReachedDesc || tr.voiceHint) : tr.voiceHint}</p>
     </div>
   );
 }
@@ -1499,7 +2289,7 @@ function AccountPage({
               </div>
             )}
 
-            {/* Centerpiece Card: Paket Plus — M Putra Ramadhani - Ai Indonesia */}
+            {/* Centerpiece Card: Paket Plus, M Putra Ramadhani - Ai Indonesia */}
             <div className={`upgrade-centerpiece ${userPlan === "plus" ? "is-active" : ""}`}>
               <div className="upgrade-top-row">
                 <div className="upgrade-headline-wrap">
@@ -1507,7 +2297,7 @@ function AccountPage({
                     {userPlan === "plus"
                       ? "Paket Aktif Anda"
                       : discountPercent > 0
-                        ? `Penawaran Khusus — Diskon ${discountPercent}%`
+                        ? `Penawaran Khusus: Diskon ${discountPercent}%`
                         : tr.popularBadge}
                   </span>
                   <h2 className="upgrade-plan-title">{tr.plusPlanName}</h2>
@@ -1553,7 +2343,7 @@ function AccountPage({
                     <span>{tr.plusF2}</span>
                   </div>
                   <p className="upgrade-pillar-text">
-                    Akses penuh ke seluruh koleksi model M Putra Ramadhani — Ultra, Lightning, Genius, dan lainnya.
+                    Akses penuh ke seluruh koleksi model M Putra Ramadhani: Ultra, Lightning, Genius, dan lainnya.
                   </p>
                 </div>
 
@@ -1600,8 +2390,8 @@ function AccountPage({
                         {buying
                           ? tr.btnComingSoon
                           : discountPercent > 0
-                            ? `Berlangganan Plus — ${buttonPromoPriceText} / bln`
-                            : `${tr.btnBuyPlus} — Rp 500rb / bln`}
+                            ? `Berlangganan Plus: ${buttonPromoPriceText} / bln`
+                            : `${tr.btnBuyPlus}, Rp 500rb / bln`}
                       </span>
                     </button>
                     <span className="upgrade-subtext-reassure">
@@ -2020,6 +2810,12 @@ function App() {
   }, [messages, streaming]);
 
   const FREE_CHAT_LIMIT = 10;
+  const FREE_VOICE_LIMIT = 5;
+  const currentMonthKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+  const voiceUsage = userProfile?.voiceUsage || {};
+  const currentVoiceCount = voiceUsage.month === currentMonthKey ? Number(voiceUsage.count || 0) : 0;
+  const isVoiceLimitReached = userPlan === "free" && currentVoiceCount >= FREE_VOICE_LIMIT;
+  const remainingVoiceCount = userPlan === "plus" ? Infinity : Math.max(0, FREE_VOICE_LIMIT - currentVoiceCount);
   const todayKey = new Date().toLocaleDateString("en-CA");
   const uploadUsage = userProfile?.attachmentUsage || {};
   const freeAttachmentRemaining = userPlan === "plus" ? Infinity : Math.max(0, 3 - (uploadUsage.date === todayKey ? Number(uploadUsage.count || 0) : 0));
@@ -2039,7 +2835,26 @@ function App() {
 
   const saveChat = async (id, nextMessages, customRegen = regenCount) => {
     if (!user || !id) return;
-    const storedMessages = nextMessages.filter((message) => !message.pending && !message.error).map(({ attachments, ...message }) => ({ ...message, attachments: attachments?.map(({ name, type, isImage, dataUrl }) => ({ name, type, isImage, dataUrl: isImage ? (dataUrl || null) : null })) || [] }));
+    // Batasi penyimpanan: jumlah pesan dibatasi, dan foto base64 lama dipangkas jadi metadata
+    const sliced = nextMessages.slice(-MAX_STORED_MESSAGES);
+    const offset = nextMessages.length - sliced.length;
+    const keepPhotosFrom = Math.max(0, nextMessages.length - MAX_RECENT_PHOTOS);
+    const storedMessages = sliced
+      .filter((message) => !message.pending && !message.error)
+      .map((message, index) => {
+        const { attachments, ...rest } = message;
+        const keepPhotos = index + offset >= keepPhotosFrom;
+        return {
+          ...rest,
+          attachments: (attachments || []).map(({ name, type, isImage, dataUrl, extractedText }) => ({
+            name,
+            type,
+            isImage,
+            extractedText: extractedText || "",
+            dataUrl: keepPhotos && isImage ? (dataUrl || null) : null,
+          })),
+        };
+      });
     await set(ref(db, `users/${user.uid}/conversations/${id}`), {
       title: nextMessages.find((message) => message.role === "user")?.content?.slice(0, 46) || t.newConversation,
       messages: storedMessages,
@@ -2048,15 +2863,28 @@ function App() {
       expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000
     });
   };
-  const request = async (history, chatId, currentRegen = regenCount) => {
+  const request = async (history, chatId, currentRegen = regenCount, isVoice = false, targetIndex = null) => {
     const assistantTime = time();
     setStreaming(true);
-    setMessages((current) => [...current, { role: "assistant", content: "", pending: true, at: assistantTime }]);
+    if (targetIndex !== null && typeof targetIndex === "number") {
+      setMessages((current) =>
+        current.map((m, i) => (i === targetIndex ? { ...m, pending: true, error: null } : m))
+      );
+    } else {
+      setMessages((current) => [...current, { role: "assistant", content: "", pending: true, at: assistantTime }]);
+    }
     try {
-      const apiMessages = history.map(({ role, content, attachments }) => {
-        if (!attachments?.some((file) => file.dataUrl)) return { role, content };
+      // Batasi memori AI: hanya potongan terakhir yang dikirim, dibuka dari pesan pengguna
+      const memory = history.slice(-MAX_AI_MEMORY);
+      while (memory.length > 0 && memory[0].role !== "user") memory.shift();
+      const apiMessages = memory.map(({ role, content, attachments }) => {
+        if (!attachments?.some((file) => file.dataUrl || file.extractedText)) return { role, content };
         const parts = [{ type: "text", text: content || "Tolong analisis lampiran ini." }];
         attachments.forEach((file) => {
+          if (file.extractedText) {
+            parts.push({ type: "text", text: `\n\nIsi dokumen ${file.name}:\n${file.extractedText}` });
+            return;
+          }
           if (!file.dataUrl) return;
           if (file.isImage) parts.push({ type: "image_url", image_url: { url: file.dataUrl } });
           else if (file.type === "application/pdf") parts.push({ type: "file", file: { filename: file.name, file_data: file.dataUrl } });
@@ -2069,7 +2897,7 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: selectedModel,
-          messages: [{ role: "system", content: SYSTEM_PROMPT }, ...apiMessages],
+          messages: [{ role: "system", content: SYSTEM_PROMPT + SAFETY_RULES + (isVoice ? VOICE_SYSTEM_INSTRUCTION : "") }, ...apiMessages],
           temperature: CONFIG.temperature,
           max_tokens: CONFIG.maxTokens,
           stream: true
@@ -2104,11 +2932,49 @@ function App() {
       if (!full) {
         full = t.defaultAiGreeting || "Halo! Saya M Putra Ramadhani - Ai Indonesia. Senang bisa terhubung dengan Anda! Ada yang bisa saya bantu atau diskusikan bersama hari ini?";
       }
-      const completed = [...history, { role: "assistant", content: full, at: assistantTime }];
-      setMessages(completed);
-      persistChat(chatId, completed, currentRegen);
+
+      if (targetIndex !== null && typeof targetIndex === "number") {
+        setMessages((current) => {
+          const completed = current.map((m, i) => {
+            if (i !== targetIndex) return m;
+            const prevVersions = Array.isArray(m.versions) && m.versions.length > 0 ? m.versions : (m.content ? [m.content] : []);
+            const nextVersions = prevVersions.includes(full) ? prevVersions : [...prevVersions, full];
+            return {
+              ...m,
+              content: full,
+              pending: false,
+              error: null,
+              at: assistantTime,
+              versions: nextVersions,
+              versionIndex: nextVersions.length - 1,
+            };
+          });
+          persistChat(chatId, completed, currentRegen);
+          return completed;
+        });
+      } else {
+        const completed = [...history, { role: "assistant", content: full, at: assistantTime, versions: [full], versionIndex: 0 }];
+        setMessages(completed);
+        persistChat(chatId, completed, currentRegen);
+      }
+      return full;
     } catch (error) {
-      setMessages((current) => [...current.slice(0, -1), { role: "assistant", error: error.message || "Something went wrong reaching M Putra Ramadhani - Ai Indonesia.", at: assistantTime }]);
+      console.warn("Permintaan ke AI gagal:", error?.message || error);
+      if (targetIndex !== null && typeof targetIndex === "number") {
+        setMessages((current) =>
+          current.map((m, i) =>
+            i === targetIndex
+              ? { ...m, pending: false, error: error.message || "Something went wrong reaching M Putra Ramadhani - Ai Indonesia." }
+              : m
+          )
+        );
+      } else {
+        setMessages((current) => [
+          ...current.slice(0, -1),
+          { role: "assistant", error: error.message || "Something went wrong reaching M Putra Ramadhani - Ai Indonesia.", at: assistantTime },
+        ]);
+      }
+      return null;
     } finally {
       setStreaming(false);
     }
@@ -2136,15 +3002,44 @@ function App() {
     persistChat(id, next, regenCount);
     void request(next, id, regenCount);
   };
-  const regenerate = () => {
+  const regenerate = (targetIndex = null) => {
     if (streaming || !conversationId) return;
     if (userProfile?.status === "banned") return;
     if (userPlan === "free" && totalUsageCount >= FREE_CHAT_LIMIT) return;
+
+    let idx = targetIndex;
+    if (idx === null || idx === undefined) {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === "assistant") {
+          idx = i;
+          break;
+        }
+      }
+    }
+    if (idx === null || idx === undefined || idx < 0 || idx >= messages.length) return;
+
     const nextRegen = (regenCount || 0) + 1;
     setRegenCount(nextRegen);
-    const base = messages.slice(0, -1).filter((m) => m.role === "user" || m.content);
-    setMessages(base);
-    void request(base, conversationId, nextRegen);
+    // Kirim konteks pesan-pesan sebelum pesan asisten yang ingin dibuat ulang
+    const history = messages.slice(0, idx).filter((m) => m.role === "user" || m.content);
+    void request(history, conversationId, nextRegen, false, idx);
+  };
+  const switchMessageVersion = (messageIndex, newVersionIndex) => {
+    if (streaming) return;
+    setMessages((current) => {
+      const next = current.map((m, idx) => {
+        if (idx !== messageIndex || !m.versions || !m.versions[newVersionIndex]) return m;
+        return {
+          ...m,
+          content: m.versions[newVersionIndex],
+          versionIndex: newVersionIndex,
+        };
+      });
+      if (conversationId) {
+        persistChat(conversationId, next, regenCount);
+      }
+      return next;
+    });
   };
   const navigateToPage = (newPage) => {
     setPage(newPage);
@@ -2153,6 +3048,66 @@ function App() {
     }
   };
 
+  // Suara Putra: mode obrolan suara memakai model yang sudah ada (Plus: V6.1 Chat, Free: model Free)
+  const openVoiceMode = () => {
+    if (streaming) return;
+    const voiceModel = userPlan === "plus" ? "mputra/v61-peduli" : "openrouter/free";
+    setSelectedModel(voiceModel);
+    saveModel(voiceModel);
+    const freshId = user ? push(ref(db, `users/${user.uid}/conversations`)).key : null;
+    setConversationId(freshId);
+    setMessages([]);
+    setRegenCount(0);
+    navigateToPage("voice");
+  };
+  const sendVoiceMessage = async (history) => {
+    if (!user || streaming) return null;
+    if (userProfile?.status === "banned") return null;
+    if (userPlan === "free" && currentVoiceCount >= FREE_VOICE_LIMIT) {
+      return t.voiceLimitMsg || (lang === "en"
+        ? "You have reached the limit of 5 voice messages for this month. It will reset next month, or upgrade to Plus to chat without limits!"
+        : "Batas 5 pesan obrolan suara gratis untuk bulan ini telah tercapai. Kuota baru kembali bulan depan, atau upgrade ke Plus untuk mengobrol sepuasnya tanpa batas!");
+    }
+
+    // Periksa apakah pengguna meminta kode pemrograman di sesi suara
+    const lastUserMsg = history.slice().reverse().find((m) => m.role === "user")?.content || "";
+    if (isProgrammingRequest(lastUserMsg)) {
+      return t.voiceNoCodeAllowed || (lang === "en"
+        ? "Sorry, writing or generating programming code can only be done on the chat page. Here in Voice Mode, we can only chat via voice. Please switch to the chat page if you need help with programming code!"
+        : "Maaf ya, untuk pembuatan atau penulisan kode pemrograman hanya bisa dilakukan di halaman chat teks. Di mode suara ini kita hanya bisa mengobrol santai. Yuk, pindah ke halaman chat kalau kamu butuh bantuan kode pemrograman!");
+    }
+
+    const chatId = conversationId || push(ref(db, `users/${user.uid}/conversations`)).key;
+    if (chatId !== conversationId) setConversationId(chatId);
+    setMessages(history);
+    updateChatUrl(user.uid, chatId);
+    persistChat(chatId, history, regenCount);
+    // Model gratis kadang kena rate limit sesaat: coba maksimal dua kali
+    let reply = await request(history, chatId, regenCount, true);
+    if (!reply) {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      reply = await request(history, chatId, regenCount, true);
+    }
+    if (!reply) console.warn("Suara Putra: tidak mendapat jawaban setelah dua percobaan.");
+
+    // Filter cadangan jika respons AI tetap memuat blok kode pemrograman
+    if (reply && (reply.includes("```") || isProgrammingRequest(reply))) {
+      reply = t.voiceNoCodeAllowed || (lang === "en"
+        ? "Sorry, writing or generating programming code can only be done on the chat page. Here in Voice Mode, we can only chat via voice. Please switch to the chat page if you need help with programming code!"
+        : "Maaf ya, untuk pembuatan atau penulisan kode pemrograman hanya bisa dilakukan di halaman chat teks. Di mode suara ini kita hanya bisa mengobrol santai. Yuk, pindah ke halaman chat kalau kamu butuh bantuan kode pemrograman!");
+    }
+
+    // Hitung pemakaian kuota suara per bulan khusus pengguna paket Free
+    if (reply && userPlan === "free") {
+      const nextVoiceCount = currentVoiceCount + 1;
+      const nextVoiceUsage = { month: currentMonthKey, count: nextVoiceCount };
+      setUserProfile((current) => ({ ...(current || {}), voiceUsage: nextVoiceUsage }));
+      void update(ref(db, `users/${user.uid}/profile`), { voiceUsage: nextVoiceUsage, updatedAt: Date.now() })
+        .catch((err) => console.warn("Gagal menyimpan kuota suara:", err.code));
+    }
+
+    return reply || null;
+  };
   const reset = () => {
     if (!streaming) {
       setMessages([]);
@@ -2192,11 +3147,23 @@ function App() {
 
   return <div className={`app app-shell ${user && sidebarOpen ? "drawer-open" : ""}`}>
     {authReady && !user && <AuthModal t={t} />}
-    {user && <Sidebar chats={chats} activeId={conversationId} onOpen={openChat} onNew={reset} onDelete={removeChat} user={user} isOpen={sidebarOpen} onToggle={() => setSidebarOpen((open) => !open)} onPage={navigateToPage} userPlan={userPlan} t={t} />}
+    {user && <Sidebar chats={chats} activeId={conversationId} onOpen={openChat} onNew={reset} onDelete={removeChat} user={user} isOpen={sidebarOpen} onToggle={() => setSidebarOpen((open) => !open)} onPage={navigateToPage} userPlan={userPlan} onVoiceMode={openVoiceMode} t={t} />}
     {user && sidebarOpen && <button className="sidebar-backdrop" aria-label={t.closeSidebar} onClick={() => setSidebarOpen(false)} />}
     <div className="app-main">
       {user && !sidebarOpen && <span className="header-name"><span>M Putra Ramadhani</span><small>AI INDONESIA</small></span>}
-      {user && page !== "chat" ? (
+      {user && page === "voice" ? (
+        <VoiceMode
+          t={t}
+          lang={lang}
+          onExit={reset}
+          onSend={sendVoiceMessage}
+          userPlan={userPlan}
+          remainingVoiceCount={remainingVoiceCount}
+          freeVoiceLimit={FREE_VOICE_LIMIT}
+          isVoiceLimitReached={isVoiceLimitReached}
+          onUpgrade={() => navigateToPage("upgrade")}
+        />
+      ) : user && page !== "chat" ? (
         <AccountPage
           page={page}
           user={user}
@@ -2342,7 +3309,15 @@ function App() {
                     )}
                     <span className="msg-time msg-time-below">{message.at}</span>
                     {message.role === "assistant" && !message.pending && (
-                      <Actions text={message.error || message.content} onRegenerate={regenerate} t={t} disabled={isLimitReached} />
+                      <Actions
+                        text={message.error || message.content}
+                        onRegenerate={() => regenerate(index)}
+                        t={t}
+                        disabled={isLimitReached || streaming}
+                        versions={message.versions}
+                        versionIndex={message.versionIndex}
+                        onSwitchVersion={(newVer) => switchMessageVersion(index, newVer)}
+                      />
                     )}
                   </div>
                 ))}

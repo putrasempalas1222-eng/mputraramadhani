@@ -1,7 +1,9 @@
 export default async function handler(req, res) {
   if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
   try {
-    const upstream = await fetch("https://openrouter.ai/api/v1/models");
+    const openrouterBase = (process.env.OPENROUTER_API_URL || "").replace(/\/$/, "");
+    if (!openrouterBase) throw new Error("OPENROUTER_API_URL belum dikonfigurasi.");
+    const upstream = await fetch(`${openrouterBase}/models`);
     if (!upstream.ok) throw new Error("Gagal mengambil daftar model.");
     const data = await upstream.json();
     const models = (data.data || []).filter((model) =>

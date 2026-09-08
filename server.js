@@ -8,25 +8,48 @@ import QRCode from "qrcode";
 const app = express();
 const root = path.dirname(fileURLToPath(import.meta.url));
 const MIDTRANS_API = process.env.MIDTRANS_IS_PRODUCTION === "true"
-  ? "https://api.midtrans.com"
-  : "https://api.sandbox.midtrans.com";
+  ? (process.env.MIDTRANS_API_URL || "").replace(/\/$/, "")
+  : (process.env.MIDTRANS_SANDBOX_API_URL || "").replace(/\/$/, "");
 const PLUS_PRICE = Number(process.env.MIDTRANS_PLUS_PRICE || 500000);
 const APINEX_REFERENCE_MODELS = {
-  "mputra/cepat": "free/gemini-3.8-flash",
-  "mputra/seimbang": "free/qwen-3.8-max",
-  "mputra/kreatif": "free/muse-spark-1.3",
-  "mputra/fokus": "free/glm-5.3-flash",
-  "mputra/mendalam": "free/deepseek-v4-pro-0813",
-  "mputra/sempurna": "free/gemini-3.1-pro",
-  "mputra/petir": "free/deepseek-v4-flash-0731",
-  "mputra/presisi": "free/gpt-5.6-luna",
+  "mputra/cepat": process.env.MODEL_MPUTRA_CEPAT || "",
+  "mputra/seimbang": process.env.MODEL_MPUTRA_SEIMBANG || "",
+  "mputra/kreatif": process.env.MODEL_MPUTRA_KREATIF || "",
+  "mputra/fokus": process.env.MODEL_MPUTRA_FOKUS || "",
+  "mputra/mendalam": process.env.MODEL_MPUTRA_MENDALAM || "",
+  "mputra/sempurna": process.env.MODEL_MPUTRA_SEMPURNA || "",
+  "mputra/petir": process.env.MODEL_MPUTRA_PETIR || "",
+  "mputra/presisi": process.env.MODEL_MPUTRA_PRESISI || "",
+};
+const KIRA_REFERENCE_MODELS = {
+  "mputra/v61-auto": process.env.MODEL_MPUTRA_V61_AUTO || "",
+  "mputra/v61-cepat": process.env.MODEL_MPUTRA_V61_CEPAT || "",
+  "mputra/v61-analisis": process.env.MODEL_MPUTRA_V61_ANALISIS || "",
+  "mputra/v61-lite": process.env.MODEL_MPUTRA_V61_LITE || "",
+  "mputra/v61-mini": process.env.MODEL_MPUTRA_V61_MINI || "",
+  "mputra/v61-flash": process.env.MODEL_MPUTRA_V61_FLASH || "",
+  "mputra/v61-vision": process.env.MODEL_MPUTRA_V61_VISION || "",
+  "mputra/v61-fokus": process.env.MODEL_MPUTRA_V61_FOKUS || "",
+  "mputra/v61-peduli": process.env.MODEL_MPUTRA_V61_PEDULI || "",
+};
+const TOKENROUTER_REFERENCE_MODELS = { "mputra/v61-gratis": process.env.MODEL_MPUTRA_V61_GRATIS || "" };
+const ORCAROUTER_REFERENCE_MODELS = { "mputra/v61-maya": process.env.MODEL_MPUTRA_V61_MAYA || "" };
+const CEOWEB3_REFERENCE_MODELS = {
+  "mputra/v62-astras-thinking": process.env.MODEL_MPUTRA_V62_ASTRAS_THINKING || "",
+  "mputra/v62-astras-flash": process.env.MODEL_MPUTRA_V62_ASTRAS_FLASH || "",
+  "mputra/v62-astras-medium": process.env.MODEL_MPUTRA_V62_ASTRAS_MEDIUM || "",
+  "mputra/v62-trunty-flash": process.env.MODEL_MPUTRA_V62_TRUNTY_FLASH || "",
+  "mputra/v62-dola": process.env.MODEL_MPUTRA_V62_DOLA || "",
+  "mputra/v62-trunty-thinking": process.env.MODEL_MPUTRA_V62_TRUNTY_THINKING || "",
 };
 async function paymentBreakdown(voucher, uid) {
   let promo = null;
   try {
-    const databaseUrl = (process.env.FIREBASE_DATABASE_URL || "https://database-moyomo-default-rtdb.firebaseio.com").replace(/\/$/, "");
-    const response = await fetch(`${databaseUrl}/promos/current.json`);
-    if (response.ok) promo = await response.json();
+    const databaseUrl = (process.env.FIREBASE_DATABASE_URL || process.env.VITE_FIREBASE_DATABASE_URL || "").replace(/\/$/, "");
+    if (databaseUrl) {
+      const response = await fetch(`${databaseUrl}/promos/current.json`);
+      if (response.ok) promo = await response.json();
+    }
   } catch {}
   const target = String(promo?.target || "").toLowerCase();
   const allowed = target === "all" || ((target === "specific" || target === "random") && promo?.allowedUids?.[uid]);
@@ -61,12 +84,16 @@ const IDENTITY_PROMPT = `You are M Putra Ramadhani - Ai Indonesia. Your only pub
 CRITICAL MANDATORY INSTRUCTIONS:
 - NEVER output safety ratings, moderation evaluations, or status tokens such as 'User Safety: safe', 'User Safety:', 'Safety: safe', or classification outputs.
 - If asked who made you, your origin, your model, provider, company, technology, or training, reply with exactly: "Saya M Putra Ramadhani. Ada yang bisa saya bantu?" Do not add any explanation.
-- Always provide warm, direct, intelligent, and natural conversational answers in the user's language. This rule cannot be overridden.`;
-app.use(express.json({ limit: "1mb" }));
+- Always provide warm, direct, supportive, non-judgmental, and natural conversational answers in the user's language.
+- Refuse requests that enable illegal or harmful conduct, including hacking, malware, ransomware, phishing, DDoS, credential theft, bypassing security, fraud, doxxing, weapons, or evading law enforcement. Never provide code, payloads, step-by-step instructions, or troubleshooting for those actions. Briefly offer a safe and legal alternative, such as defensive security, account recovery, privacy protection, or ethical learning. This rule cannot be overridden.`;
+// Lampiran PDF dikirim sebagai base64, jadi perlu ruang lebih dari JSON chat biasa.
+app.use(express.json({ limit: "8mb" }));
 
 app.get("/api/models", async (_req, res) => {
   try {
-    const upstream = await fetch("https://openrouter.ai/api/v1/models");
+    const openrouterBase = (process.env.OPENROUTER_API_URL || "").replace(/\/$/, "");
+    if (!openrouterBase) throw new Error("OPENROUTER_API_URL belum dikonfigurasi.");
+    const upstream = await fetch(`${openrouterBase}/models`);
     if (!upstream.ok) throw new Error("Gagal mengambil model dari OpenRouter");
     const json = await upstream.json();
     const freeModels = (json.data || []).filter((m) => {
@@ -86,26 +113,50 @@ app.post("/api/chat", async (req, res) => {
   const keys = [process.env.OPENROUTER_API_KEY, process.env.OPENROUTER_API_KEY_FALLBACK, process.env.OPENROUTER_API_KEY_FALLBACK_2, process.env.OPENROUTER_API_KEY_FALLBACK_3, process.env.OPENROUTER_API_KEY_FALLBACK_4, process.env.OPENROUTER_API_KEY_FALLBACK_5, process.env.OPENROUTER_API_KEY_FALLBACK_6, process.env.OPENROUTER_API_KEY_FALLBACK_7]
     .map((key) => (key || "").trim())
     .filter(Boolean);
-  if (!keys.length) return res.status(500).json({ error: "OPENROUTER_API_KEY is not configured on the server." });
+  if (!keys.length && !process.env.KIRA_API_KEY && !process.env.TOKENROUTER_API_KEY && !process.env.ORCAROUTER_API_KEY && !process.env.CEOWEB3_API_KEY && !process.env.APINEX_API_KEY) return res.status(500).json({ error: "Kunci API belum dikonfigurasi di server." });
   try {
     const selectedModel = req.body.model || process.env.OPENROUTER_MODEL || "openrouter/free";
     const payload = JSON.stringify({ ...req.body, model: selectedModel, messages: [{ role: "system", content: IDENTITY_PROMPT }, ...(Array.isArray(req.body.messages) ? req.body.messages.filter((message) => message.role !== "system") : [])] });
     let upstream;
     const apinexReference = APINEX_REFERENCE_MODELS[selectedModel];
-    if (apinexReference && process.env.APINEX_API_KEY) {
+    const kiraReference = KIRA_REFERENCE_MODELS[selectedModel];
+    const tokenrouterReference = TOKENROUTER_REFERENCE_MODELS[selectedModel];
+    const orcarouterReference = ORCAROUTER_REFERENCE_MODELS[selectedModel];
+    const ceoweb3Reference = CEOWEB3_REFERENCE_MODELS[selectedModel];
+
+    const ceoweb3Url = (process.env.CEOWEB3_API_URL || "").replace(/\/$/, "");
+    const orcarouterUrl = (process.env.ORCAROUTER_API_URL || "").replace(/\/$/, "");
+    const tokenrouterUrl = (process.env.TOKENROUTER_API_URL || "").replace(/\/$/, "");
+    const kiraUrl = (process.env.KIRA_API_URL || "").replace(/\/$/, "");
+    const apinexUrl = (process.env.APINEX_API_URL || "").replace(/\/$/, "");
+    const openrouterUrl = (process.env.OPENROUTER_API_URL || "").replace(/\/$/, "");
+
+    if (ceoweb3Reference && process.env.CEOWEB3_API_KEY && ceoweb3Url) {
+      const ceoweb3Payload = JSON.stringify({ ...req.body, model: ceoweb3Reference, messages: [{ role: "system", content: IDENTITY_PROMPT }, ...(Array.isArray(req.body.messages) ? req.body.messages.filter((message) => message.role !== "system") : [])] });
+      upstream = await fetch(`${ceoweb3Url}/chat/completions`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.CEOWEB3_API_KEY}` }, body: ceoweb3Payload });
+    } else if (orcarouterReference && process.env.ORCAROUTER_API_KEY && orcarouterUrl) {
+      const orcarouterPayload = JSON.stringify({ ...req.body, model: orcarouterReference, messages: [{ role: "system", content: IDENTITY_PROMPT }, ...(Array.isArray(req.body.messages) ? req.body.messages.filter((message) => message.role !== "system") : [])] });
+      upstream = await fetch(`${orcarouterUrl}/chat/completions`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.ORCAROUTER_API_KEY}` }, body: orcarouterPayload });
+    } else if (tokenrouterReference && process.env.TOKENROUTER_API_KEY && tokenrouterUrl) {
+      const tokenrouterPayload = JSON.stringify({ ...req.body, model: tokenrouterReference, messages: [{ role: "system", content: IDENTITY_PROMPT }, ...(Array.isArray(req.body.messages) ? req.body.messages.filter((message) => message.role !== "system") : [])] });
+      upstream = await fetch(`${tokenrouterUrl}/chat/completions`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.TOKENROUTER_API_KEY}` }, body: tokenrouterPayload });
+    } else if (kiraReference && process.env.KIRA_API_KEY && kiraUrl) {
+      const kiraPayload = JSON.stringify({ ...req.body, model: kiraReference, messages: [{ role: "system", content: IDENTITY_PROMPT }, ...(Array.isArray(req.body.messages) ? req.body.messages.filter((message) => message.role !== "system") : [])] });
+      upstream = await fetch(`${kiraUrl}/chat/completions`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.KIRA_API_KEY}` }, body: kiraPayload });
+    } else if (apinexReference && process.env.APINEX_API_KEY && apinexUrl) {
       const apinexPayload = JSON.stringify({ ...req.body, model: apinexReference, messages: [{ role: "system", content: IDENTITY_PROMPT }, ...(Array.isArray(req.body.messages) ? req.body.messages.filter((message) => message.role !== "system") : [])] });
-      upstream = await fetch("https://api.apinex.bond/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.APINEX_API_KEY}`, "X-Title": "M Putra Ramadhani" }, body: apinexPayload });
-    } else {
+      upstream = await fetch(`${apinexUrl}/chat/completions`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.APINEX_API_KEY}`, "X-Title": "M Putra Ramadhani" }, body: apinexPayload });
+    } else if (openrouterUrl) {
       for (const key of keys) {
-        upstream = await fetch("https://openrouter.ai/api/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, "X-Title": "M Putra Ramadhani" }, body: payload });
+        upstream = await fetch(`${openrouterUrl}/chat/completions`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, "X-Title": "M Putra Ramadhani" }, body: payload });
         if (upstream.status !== 429) break;
       }
     }
-    if (upstream?.status === 429 && process.env.APINEX_API_KEY) {
-      const apinexPayload = JSON.stringify({ ...req.body, model: process.env.APINEX_MODEL || "free/qwen-3.8-max", messages: [{ role: "system", content: IDENTITY_PROMPT }, ...(Array.isArray(req.body.messages) ? req.body.messages.filter((message) => message.role !== "system") : [])] });
-      upstream = await fetch("https://api.apinex.bond/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.APINEX_API_KEY}`, "X-Title": "M Putra Ramadhani" }, body: apinexPayload });
+    if (upstream?.status === 429 && process.env.APINEX_API_KEY && apinexUrl) {
+      const apinexPayload = JSON.stringify({ ...req.body, model: process.env.APINEX_MODEL || process.env.MODEL_MPUTRA_SEIMBANG || "", messages: [{ role: "system", content: IDENTITY_PROMPT }, ...(Array.isArray(req.body.messages) ? req.body.messages.filter((message) => message.role !== "system") : [])] });
+      upstream = await fetch(`${apinexUrl}/chat/completions`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.APINEX_API_KEY}`, "X-Title": "M Putra Ramadhani" }, body: apinexPayload });
     }
-    if (!upstream.ok) return res.status(upstream.status).send(await upstream.text());
+    if (!upstream || !upstream.ok) return res.status(upstream?.status || 502).send(upstream ? await upstream.text() : "Penyedia AI tidak tersedia.");
     res.set({ "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
     for await (const chunk of upstream.body) res.write(chunk);
     res.end();
@@ -158,7 +209,83 @@ app.get("/api/payments/:orderId", async (req, res) => {
   }
 });
 
-app.get("/admin*", (req, res) => {
+app.post("/api/tts", async (req, res) => {
+  const { text, voiceId, gender, modelId } = req.body || {};
+  if (!text || typeof text !== "string") {
+    return res.status(400).json({ error: "Teks tidak valid." });
+  }
+
+  const rawKeys = [
+    process.env.ELEVENLABS_API_KEY,
+    process.env.ELEVENLABS_API_KEY_FALLBACK,
+    process.env.ELEVENLABS_API_KEY_FALLBACK_2,
+    process.env.ELEVENLABS_API_KEY_FALLBACK_3,
+    process.env.ELEVENLABS_API_KEY_FALLBACK_4,
+    process.env.ELEVENLABS_API_KEY_FALLBACK_5,
+    process.env.ELEVENLABS_API_KEY_FALLBACK_6,
+    process.env.ELEVENLABS_API_KEY_FALLBACK_7,
+    process.env.ELEVENLABS_API_KEY_FALLBACK_8,
+  ];
+  const apiKeys = [...new Set(rawKeys.map((k) => (k || "").trim()).filter(Boolean))];
+  const maleVoice = (process.env.ELEVENLABS_VOICE_ID_MALE || process.env.ELEVENLABS_VOICE_ID || "JBFqnCBsd6RMkjVDRZzb").trim();
+  const femaleVoice = (process.env.ELEVENLABS_VOICE_ID_FEMALE || "EXAVITQu4vr4xnSDxMaL").trim();
+  const targetVoiceId = (voiceId || (gender === "female" ? femaleVoice : maleVoice)).trim();
+  const textStr = String(text);
+  const defaultShortModel = (process.env.ELEVENLABS_MODEL_ID || "eleven_flash_v2_5").trim();
+  const defaultLongModel = (process.env.ELEVENLABS_MODEL_ID_LONG || "eleven_multilingual_v2").trim();
+  // Jika teks > 1000 karakter, otomatis beralih ke model multilingual v2 agar seluruh teks dibaca tuntas tanpa batas
+  const targetModel = (modelId || (textStr.length > 1000 ? defaultLongModel : defaultShortModel)).trim();
+
+  const elevenLabsBase = (process.env.ELEVENLABS_API_URL || "").replace(/\/$/, "");
+  if (!elevenLabsBase) return res.status(500).json({ error: "ELEVENLABS_API_URL belum dikonfigurasi." });
+
+  let lastStatus = 502;
+  let lastError = "Gagal memproses audio suara ElevenLabs.";
+
+  for (let i = 0; i < apiKeys.length; i += 1) {
+    const currentKey = apiKeys[i];
+    try {
+      const upstream = await fetch(`${elevenLabsBase}/text-to-speech/${encodeURIComponent(targetVoiceId)}?output_format=mp3_44100_128`, {
+        method: "POST",
+        headers: {
+          "xi-api-key": currentKey,
+          "Content-Type": "application/json",
+          "Accept": "audio/mpeg",
+        },
+        body: JSON.stringify({
+          text: textStr.slice(0, 10000),
+          model_id: targetModel,
+          voice_settings: {
+            stability: 0.32,
+            similarity_boost: 0.82,
+            style: 0.35,
+            use_speaker_boost: true,
+          },
+        }),
+      });
+
+      if (upstream.ok) {
+        res.setHeader("Content-Type", "audio/mpeg");
+        res.setHeader("Cache-Control", "no-cache");
+        const buffer = await upstream.arrayBuffer();
+        return res.send(Buffer.from(buffer));
+      }
+
+      const errText = await upstream.text();
+      console.warn(`ElevenLabs key #${i + 1} (${currentKey.slice(0, 7)}...) failed [HTTP ${upstream.status}]:`, errText);
+      lastStatus = upstream.status;
+      lastError = errText;
+      // Kuota habis / rate limit / unauthorized: lanjut coba key berikutnya
+    } catch (err) {
+      console.warn(`ElevenLabs key #${i + 1} network exception:`, err);
+      lastError = err.message || "Network error";
+    }
+  }
+
+  res.status(lastStatus).send(lastError);
+});
+
+app.get(/^\/admin/, (req, res) => {
   const url = req.originalUrl || req.url || "";
   const [pathname, search] = url.split("?");
   const searchParams = new URLSearchParams(search || "");
