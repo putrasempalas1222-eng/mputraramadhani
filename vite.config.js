@@ -4,6 +4,16 @@ import path from "node:path";
 import crypto from "node:crypto";
 import QRCode from "qrcode";
 
+const exhaustedKeys = new Set();
+let lastExhaustedReset = Date.now();
+
+function checkExhaustedCacheReset() {
+  if (Date.now() - lastExhaustedReset > 3600000) {
+    exhaustedKeys.clear();
+    lastExhaustedReset = Date.now();
+  }
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const plusPrice = Number(env.MIDTRANS_PLUS_PRICE || 500000);
@@ -270,28 +280,27 @@ export default defineConfig(({ mode }) => {
         let raw = "";
         for await (const part of req) raw += part;
         try {
-          const { text, voiceId, gender, modelId } = JSON.parse(raw || "{}");
+          const { text, voiceId, gender, modelId, lang } = JSON.parse(raw || "{}");
           if (!text) {
             res.statusCode = 400;
             return res.end(JSON.stringify({ error: "Teks tidak valid." }));
           }
           const elevenLabsBase = (env.ELEVENLABS_API_URL || "").replace(/\/$/, "");
-          if (!elevenLabsBase) {
-            res.statusCode = 500;
-            return res.end(JSON.stringify({ error: "ELEVENLABS_API_URL belum dikonfigurasi." }));
-          }
           const rawKeys = [
             env.ELEVENLABS_API_KEY,
             env.ELEVENLABS_API_KEY_FALLBACK,
-            env.ELEVENLABS_API_KEY_FALLBACK_2,
-            env.ELEVENLABS_API_KEY_FALLBACK_3,
-            env.ELEVENLABS_API_KEY_FALLBACK_4,
-            env.ELEVENLABS_API_KEY_FALLBACK_5,
-            env.ELEVENLABS_API_KEY_FALLBACK_6,
-            env.ELEVENLABS_API_KEY_FALLBACK_7,
-            env.ELEVENLABS_API_KEY_FALLBACK_8,
+            ...Object.keys(env)
+              .filter((k) => /^ELEVENLABS_API_KEY(?:_FALLBACK)?(?:_\d+)?$/i.test(k))
+              .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+              .map((k) => env[k]),
           ];
-          const apiKeys = [...new Set(rawKeys.map((k) => (k || "").trim()).filter(Boolean))];
+          const allApiKeys = [...new Set(rawKeys.map((k) => (k || "").trim()).filter(Boolean))];
+
+          checkExhaustedCacheReset();
+          const apiKeys = [
+            ...allApiKeys.filter((k) => !exhaustedKeys.has(k)),
+            ...allApiKeys.filter((k) => exhaustedKeys.has(k)),
+          ];
           const maleVoice = (env.ELEVENLABS_VOICE_ID_MALE || env.ELEVENLABS_VOICE_ID || "JBFqnCBsd6RMkjVDRZzb").trim();
           const femaleVoice = (env.ELEVENLABS_VOICE_ID_FEMALE || "EXAVITQu4vr4xnSDxMaL").trim();
           const targetVoiceId = (voiceId || (gender === "female" ? femaleVoice : maleVoice)).trim();
@@ -304,42 +313,103 @@ export default defineConfig(({ mode }) => {
           let lastStatus = 502;
           let lastError = "Gagal memproses TTS ElevenLabs.";
 
-          for (let i = 0; i < apiKeys.length; i += 1) {
-            const currentKey = apiKeys[i];
-            try {
-              const upstream = await fetch(`${elevenLabsBase}/text-to-speech/${encodeURIComponent(targetVoiceId)}?output_format=mp3_44100_128`, {
-                method: "POST",
-                headers: {
-                  "xi-api-key": currentKey,
-                  "Content-Type": "application/json",
-                  "Accept": "audio/mpeg",
-                },
-                body: JSON.stringify({
-                  text: textStr.slice(0, 10000),
-                  model_id: targetModel,
-                  voice_settings: {
-                    stability: 0.32,
-                    similarity_boost: 0.82,
-                    style: 0.35,
-                    use_speaker_boost: true,
+          if (elevenLabsBase && apiKeys.length > 0) {
+            for (let i = 0; i < apiKeys.length; i += 1) {
+              const currentKey = apiKeys[i];
+              try {
+                const upstream = await fetch(`${elevenLabsBase}/text-to-speech/${encodeURIComponent(targetVoiceId)}?output_format=mp3_44100_128`, {
+                  method: "POST",
+                  headers: {
+                    "xi-api-key": currentKey,
+                    "Content-Type": "application/json",
+                    "Accept": "audio/mpeg",
                   },
-                }),
-              });
+                  body: JSON.stringify({
+                    text: textStr.slice(0, 10000),
+                    model_id: targetModel,
+                    voice_settings: {
+                      stability: 0.32,
+                      similarity_boost: 0.82,
+                      style: 0.35,
+                      use_speaker_boost: true,
+                    },
+                  }),
+                });
 
-              if (upstream.ok) {
-                res.writeHead(200, { "Content-Type": "audio/mpeg", "Cache-Control": "no-cache" });
-                const buffer = await upstream.arrayBuffer();
-                return res.end(Buffer.from(buffer));
+                if (upstream.ok) {
+                  exhaustedKeys.delete(currentKey);
+                  console.info(`[ElevenLabs] Audio berhasil di-generate menggunakan key (${currentKey.slice(0, 10)}...)`);
+                  res.writeHead(200, { "Content-Type": "audio/mpeg", "Cache-Control": "no-cache" });
+                  const buffer = await upstream.arrayBuffer();
+                  return res.end(Buffer.from(buffer));
+                }
+
+                const err = await upstream.text();
+                if (err.includes("quota_exceeded") || upstream.status === 429) {
+                  exhaustedKeys.add(currentKey);
+                  console.warn(`[ElevenLabs] Key (${currentKey.slice(0, 10)}...) kuota habis. Otomatis beralih ke key ElevenLabs berikutnya.`);
+                } else {
+                  console.warn(`[ElevenLabs] Key (${currentKey.slice(0, 10)}...) gagal [HTTP ${upstream.status}]:`, err);
+                }
+                lastStatus = upstream.status;
+                lastError = err;
+              } catch (err) {
+                console.warn(`[ElevenLabs] Key (${currentKey.slice(0, 10)}...) network exception:`, err);
+                lastError = err.message || "Network error";
               }
-
-              const err = await upstream.text();
-              console.warn(`ElevenLabs key #${i + 1} (${currentKey.slice(0, 7)}...) failed [HTTP ${upstream.status}]:`, err);
-              lastStatus = upstream.status;
-              lastError = err;
-            } catch (err) {
-              console.warn(`ElevenLabs key #${i + 1} network exception:`, err);
-              lastError = err.message || "Network error";
             }
+          }
+
+          // Fallback otomatis jika ElevenLabs gagal / kuota habis
+          try {
+            const targetLang = lang === "en" ? "en" : "id";
+            const clean = textStr.replace(/\s+/g, " ").trim();
+            const chunks = [];
+            let remaining = clean;
+            while (remaining.length > 0) {
+              if (remaining.length <= 180) {
+                chunks.push(remaining);
+                break;
+              }
+              let splitIdx = -1;
+              const searchSlice = remaining.slice(0, 180);
+              const punctuationMatch = searchSlice.match(/.*[.?!,;:]\s/);
+              if (punctuationMatch && punctuationMatch[0].length > 40) {
+                splitIdx = punctuationMatch[0].length;
+              } else {
+                splitIdx = searchSlice.lastIndexOf(" ");
+                if (splitIdx <= 30) splitIdx = 180;
+              }
+              chunks.push(remaining.slice(0, splitIdx).trim());
+              remaining = remaining.slice(splitIdx).trim();
+            }
+
+            const audioBuffers = [];
+            for (const chunk of chunks.slice(0, 25)) {
+              if (!chunk) continue;
+              try {
+                const fbUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=${targetLang}&client=tw-ob`;
+                const fbRes = await fetch(fbUrl, {
+                  headers: {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Referer": "https://translate.google.com/",
+                  },
+                });
+                if (fbRes.ok) {
+                  const buf = await fbRes.arrayBuffer();
+                  audioBuffers.push(Buffer.from(buf));
+                }
+              } catch (e) {
+                console.warn("TTS fallback chunk fetch failed:", e);
+              }
+            }
+
+            if (audioBuffers.length > 0) {
+              res.writeHead(200, { "Content-Type": "audio/mpeg", "Cache-Control": "no-cache" });
+              return res.end(Buffer.concat(audioBuffers));
+            }
+          } catch (fallbackErr) {
+            console.warn("Fallback TTS gagal:", fallbackErr);
           }
 
           res.statusCode = lastStatus;

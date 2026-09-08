@@ -1469,8 +1469,13 @@ function VoiceMode({
     return [{ role: "assistant", content: greeting }];
   });
   const recogRef = useRef(null);
+  const isRecognizingRef = useRef(false);
+  const restartTimerRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const audioSourceNodeRef = useRef(null);
   const audioRef = useRef(null);
-  const audioUnlockRef = useRef(null);
+  const audioUnlockPromiseRef = useRef(null);
+  const activeBlobUrlRef = useRef(null);
   const statusRef = useRef("idle");
   const mutedRef = useRef(false);
   const interimRef = useRef("");
@@ -1481,8 +1486,31 @@ function VoiceMode({
   const exchangesRef = useRef(exchanges);
   const pausedPrevStatusRef = useRef("listening");
 
+  const stopAudio = () => {
+    if (audioSourceNodeRef.current) {
+      try {
+        audioSourceNodeRef.current.stop();
+        audioSourceNodeRef.current.disconnect();
+      } catch {}
+      audioSourceNodeRef.current = null;
+    }
+    if (audioRef.current) {
+      try {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      } catch {}
+    }
+    if (activeBlobUrlRef.current) {
+      try { URL.revokeObjectURL(activeBlobUrlRef.current); } catch {}
+      activeBlobUrlRef.current = null;
+    }
+    try { window.speechSynthesis?.cancel(); } catch {}
+  };
+
   const stopVoiceCapture = () => {
     loopRef.current = false;
+    isRecognizingRef.current = false;
+    clearTimeout(restartTimerRef.current);
     clearTimeout(silenceRef.current);
     silenceRef.current = null;
     finalRef.current = "";
@@ -1501,23 +1529,14 @@ function VoiceMode({
   useEffect(() => {
     if (!isVoiceLimitReached) return;
     stopVoiceCapture();
-    if (audioRef.current) {
-      try { audioRef.current.pause(); } catch {}
-      audioRef.current = null;
-    }
-    try { window.speechSynthesis?.cancel(); } catch {}
+    stopAudio();
     setStatus("idle");
   }, [isVoiceLimitReached]);
   // Perbarui commitSpeech setiap render agar closure (onSend, dll) selalu yang terbaru
   useEffect(() => { commitRef.current = commitSpeech; });
   useEffect(() => () => {
-    loopRef.current = false;
-    clearTimeout(silenceRef.current);
-    try { recogRef.current?.abort?.(); } catch {}
-    if (audioRef.current) {
-      try { audioRef.current.pause(); } catch {}
-    }
-    try { window.speechSynthesis?.cancel(); } catch {}
+    stopVoiceCapture();
+    stopAudio();
   }, []);
 
   const handleGenderChange = (gender) => {
@@ -1525,14 +1544,64 @@ function VoiceMode({
     setVoiceGender(gender);
     voiceGenderRef.current = gender;
     try { localStorage.setItem("val_ai_voice_gender", gender); } catch {}
-    if (audioRef.current) {
-      try { audioRef.current.pause(); } catch {}
-      audioRef.current = null;
-    }
-    try { window.speechSynthesis?.cancel(); } catch {}
+    stopAudio();
     const greeting = gender === "female" ? (tr.voiceGreetingFemale || tr.voiceGreeting) : tr.voiceGreeting;
     setExchanges([{ role: "assistant", content: greeting }]);
     exchangesRef.current = [{ role: "assistant", content: greeting }];
+  };
+
+  const primeMicrophone = () => {
+    if (typeof navigator !== "undefined" && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then((stream) => {
+          stream.getTracks().forEach((track) => track.stop());
+        })
+        .catch((err) => {
+          console.warn("Prime mic permission error:", err);
+        });
+    }
+  };
+
+  const getAudioContext = () => {
+    if (!audioCtxRef.current && typeof window !== "undefined") {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        audioCtxRef.current = new AudioCtx();
+      }
+    }
+    if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
+      audioCtxRef.current.resume().catch(() => {});
+    }
+    return audioCtxRef.current;
+  };
+
+  const unlockAudio = async () => {
+    if (audioUnlockPromiseRef.current) return audioUnlockPromiseRef.current;
+    audioUnlockPromiseRef.current = (async () => {
+      const ctx = getAudioContext();
+      if (ctx && ctx.state === "suspended") {
+        try { await ctx.resume(); } catch {}
+      }
+      if (!audioRef.current && typeof Audio !== "undefined") {
+        const sound = new Audio();
+        sound.setAttribute("playsinline", "true");
+        sound.setAttribute("webkit-playsinline", "true");
+        sound.playsInline = true;
+        sound.preload = "auto";
+        audioRef.current = sound;
+      }
+      if (audioRef.current) {
+        try {
+          audioRef.current.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAA";
+          await audioRef.current.play();
+          audioRef.current.pause();
+          audioRef.current.currentTime = 0;
+        } catch (e) {
+          console.warn("Audio element unlock:", e);
+        }
+      }
+    })();
+    return audioUnlockPromiseRef.current;
   };
 
   const getRecognition = () => {
@@ -1542,6 +1611,11 @@ function VoiceMode({
     recog.continuous = true;
     recog.interimResults = true;
     recog.lang = lang === "en" ? "en-US" : "id-ID";
+
+    recog.onstart = () => {
+      isRecognizingRef.current = true;
+    };
+
     recog.onresult = (event) => {
       let live = "";
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
@@ -1555,19 +1629,36 @@ function VoiceMode({
       clearTimeout(silenceRef.current);
       silenceRef.current = setTimeout(() => commitRef.current(), 2500);
     };
+
     recog.onerror = (event) => {
+      console.warn("SpeechRecognition error:", event.error);
       if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-        loopRef.current = false;
-        setErrorKind("denied");
-        setStatus("error");
+        if (loopRef.current) {
+          loopRef.current = false;
+          isRecognizingRef.current = false;
+          setErrorKind("denied");
+          setStatus("error");
+        }
       }
-      // no-speech / aborted: biarkan onend menjaga loop tetap hidup
     };
+
     recog.onend = () => {
+      isRecognizingRef.current = false;
       if (loopRef.current && statusRef.current === "listening") {
-        try { recog.start(); } catch {}
+        clearTimeout(restartTimerRef.current);
+        restartTimerRef.current = setTimeout(() => {
+          if (loopRef.current && statusRef.current === "listening" && !isRecognizingRef.current) {
+            try {
+              recog.start();
+              isRecognizingRef.current = true;
+            } catch (err) {
+              console.warn("Recognition restart failed:", err);
+            }
+          }
+        }, 150);
       }
     };
+
     recogRef.current = recog;
     return recog;
   };
@@ -1576,27 +1667,15 @@ function VoiceMode({
     if (isVoiceLimitReached) return;
     setStatus("listening");
     loopRef.current = true;
-    try { getRecognition().start(); } catch {}
-  };
-
-  const unlockAudio = () => {
-    if (audioUnlockRef.current) return audioUnlockRef.current;
-    const sound = new Audio();
-    sound.setAttribute("playsinline", "true");
-    sound.playsInline = true;
-    sound.muted = true;
-    sound.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAA";
-    audioRef.current = sound;
-    audioUnlockRef.current = sound.play()
-      .then(() => {
-        sound.pause();
-        sound.currentTime = 0;
-        sound.muted = false;
-      })
-      .catch(() => {
-        audioRef.current = null;
-      });
-    return audioUnlockRef.current;
+    clearTimeout(restartTimerRef.current);
+    if (!isRecognizingRef.current) {
+      try {
+        getRecognition().start();
+        isRecognizingRef.current = true;
+      } catch (e) {
+        console.warn("Recognition start error:", e);
+      }
+    }
   };
 
   const speak = async (text, onDone) => {
@@ -1605,23 +1684,23 @@ function VoiceMode({
     const clean = stripForSpeech(text);
     if (!clean) { onDone?.(); return; }
 
-    // Hentikan suara yang sedang berjalan sebelumnya
-    if (audioRef.current) {
-      try { audioRef.current.pause(); } catch {}
-      audioRef.current = null;
-    }
-    try { window.speechSynthesis?.cancel(); } catch {}
+    stopAudio();
 
     let finished = false;
     const handleDone = () => {
       if (finished) return;
       finished = true;
+      if (activeBlobUrlRef.current) {
+        try { URL.revokeObjectURL(activeBlobUrlRef.current); } catch {}
+        activeBlobUrlRef.current = null;
+      }
+      audioSourceNodeRef.current = null;
       onDone?.();
     };
 
     const curGender = voiceGenderRef.current;
 
-    // 1. Coba ElevenLabs Text-to-Speech via endpoint backend /api/tts
+    // 1. Coba ElevenLabs Text-to-Speech via endpoint backend /api/tts (dengan fallback streaming otomatis)
     try {
       const resp = await fetch("/api/tts", {
         method: "POST",
@@ -1629,26 +1708,56 @@ function VoiceMode({
         body: JSON.stringify({
           text: clean,
           gender: curGender,
+          lang: lang || "id",
           modelId: clean.length > 1000 ? "eleven_multilingual_v2" : "eleven_flash_v2_5",
         }),
       });
+
       if (resp.ok) {
-        const blob = await resp.blob();
+        const arrayBuf = await resp.arrayBuffer();
+
+        // 1a. Coba mainkan via Web Audio API (paling handal di mobile browser setelah gesture pertama)
+        const ctx = getAudioContext();
+        if (ctx) {
+          if (ctx.state === "suspended") {
+            try { await ctx.resume(); } catch {}
+          }
+          try {
+            const decodedBuffer = await ctx.decodeAudioData(arrayBuf.slice(0));
+            const source = ctx.createBufferSource();
+            source.buffer = decodedBuffer;
+            source.connect(ctx.destination);
+            source.onended = () => {
+              if (audioSourceNodeRef.current === source) {
+                audioSourceNodeRef.current = null;
+              }
+              handleDone();
+            };
+            audioSourceNodeRef.current = source;
+            source.start(0);
+            return;
+          } catch (decodeErr) {
+            console.warn("Web Audio decode error, beralih ke HTML5 Audio:", decodeErr);
+          }
+        }
+
+        // 1b. Fallback ke persistent HTML5 Audio element yang sudah di-unlock
+        const blob = new Blob([arrayBuf], { type: "audio/mpeg" });
         const url = URL.createObjectURL(blob);
-        const sound = audioRef.current || new Audio();
-        sound.setAttribute("playsinline", "true");
-        sound.playsInline = true;
+        activeBlobUrlRef.current = url;
+
+        let sound = audioRef.current;
+        if (!sound) {
+          sound = new Audio();
+          sound.setAttribute("playsinline", "true");
+          sound.setAttribute("webkit-playsinline", "true");
+          sound.playsInline = true;
+          audioRef.current = sound;
+        }
         sound.muted = false;
         sound.src = url;
-        audioRef.current = sound;
-        sound.onended = () => {
-          URL.revokeObjectURL(url);
-          handleDone();
-        };
-        sound.onerror = () => {
-          URL.revokeObjectURL(url);
-          handleDone();
-        };
+        sound.onended = handleDone;
+        sound.onerror = handleDone;
         await sound.play();
         return;
       }
@@ -1686,8 +1795,9 @@ function VoiceMode({
       return;
     }
     if (!sttSupported) { setErrorKind("unsupported"); setStatus("error"); return; }
-    if (muted) { startListening(); return; }
+    primeMicrophone();
     void unlockAudio();
+    if (muted) { startListening(); return; }
     const greeting = voiceGenderRef.current === "female" ? (tr.voiceGreetingFemale || tr.voiceGreeting) : tr.voiceGreeting;
     speak(greeting, () => setTimeout(startListening, 350));
   };
@@ -1745,11 +1855,7 @@ function VoiceMode({
     setMuted((prev) => {
       const nextMuted = !prev;
       if (nextMuted) {
-        if (audioRef.current) {
-          try { audioRef.current.pause(); } catch {}
-          audioRef.current = null;
-        }
-        try { window.speechSynthesis?.cancel(); } catch {}
+        stopAudio();
         if (statusRef.current === "speaking") setTimeout(startListening, 200);
       }
       return nextMuted;
@@ -1759,30 +1865,38 @@ function VoiceMode({
   const togglePause = () => {
     if (status === "paused") {
       // Lanjutkan kembali
-      if (pausedPrevStatusRef.current === "speaking" && audioRef.current && audioRef.current.paused) {
-        try { audioRef.current.play(); } catch {}
-        setStatus("speaking");
-      } else if (pausedPrevStatusRef.current === "speaking" && window.speechSynthesis?.paused) {
-        try { window.speechSynthesis.resume(); } catch {}
-        setStatus("speaking");
+      if (pausedPrevStatusRef.current === "speaking") {
+        if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
+          audioCtxRef.current.resume().catch(() => {});
+          setStatus("speaking");
+        } else if (audioRef.current && audioRef.current.paused && audioRef.current.src) {
+          try { audioRef.current.play(); } catch {}
+          setStatus("speaking");
+        } else if (window.speechSynthesis?.paused) {
+          try { window.speechSynthesis.resume(); } catch {}
+          setStatus("speaking");
+        } else {
+          setStatus("listening");
+          startListening();
+        }
       } else {
         setStatus("listening");
-        loopRef.current = true;
-        try { getRecognition().start(); } catch {}
+        startListening();
       }
     } else {
       // Jeda (pause)
-      if (audioRef.current && !audioRef.current.paused) {
-        try { audioRef.current.pause(); } catch {}
+      if (status === "speaking") {
         pausedPrevStatusRef.current = "speaking";
-      } else if (window.speechSynthesis?.speaking) {
-        try { window.speechSynthesis.pause(); } catch {}
-        pausedPrevStatusRef.current = "speaking";
+        if (audioCtxRef.current && audioCtxRef.current.state === "running") {
+          try { audioCtxRef.current.suspend(); } catch {}
+        } else if (audioRef.current && !audioRef.current.paused) {
+          try { audioRef.current.pause(); } catch {}
+        } else if (window.speechSynthesis?.speaking) {
+          try { window.speechSynthesis.pause(); } catch {}
+        }
       } else {
         pausedPrevStatusRef.current = status;
-        loopRef.current = false;
-        clearTimeout(silenceRef.current);
-        try { recogRef.current?.stop(); } catch {}
+        stopVoiceCapture();
       }
       setStatus("paused");
     }
@@ -1834,11 +1948,8 @@ function VoiceMode({
             type="button"
             className="voice-icon-btn"
             onClick={() => {
-              if (audioRef.current) {
-                try { audioRef.current.pause(); } catch {}
-                audioRef.current = null;
-              }
-              try { window.speechSynthesis?.cancel(); } catch {}
+              stopAudio();
+              stopVoiceCapture();
               onExit();
             }}
             title={tr.voiceExit}
