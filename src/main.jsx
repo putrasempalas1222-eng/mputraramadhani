@@ -1099,13 +1099,26 @@ function FirebaseConsole({ user, userProfile, onNavigate, onOpenAuth }) {
       (snapshot) => {
         if (snapshot.exists()) {
           const val = snapshot.val();
+          let currentKey = "";
+          let fullKeyData = null;
           if (typeof val === "string") {
-            setApiKeyData({ key: val, status: "active" });
+            currentKey = val;
+            fullKeyData = { key: val, status: "active", createdAt: Date.now() };
+            setApiKeyData(fullKeyData);
           } else if (val && typeof val === "object") {
+            currentKey = val.key || "";
+            fullKeyData = val;
             setApiKeyData(val);
           }
+          if (currentKey) {
+            set(ref(db, `apiKeys/${currentKey}`), {
+              uid: user.uid,
+              status: "active",
+              createdAt: fullKeyData?.createdAt || Date.now()
+            }).catch(() => {});
+          }
         } else {
-          // Generate API key baru berformat sk-puai-random dan simpan ke Firebase Realtime Database
+          // Generate API key baru berformat sk-putraai-random dan simpan ke Firebase Realtime Database
           const newGeneratedKey = generateSecureApiKey(user.uid);
           const initialKey = {
             key: newGeneratedKey,
@@ -1114,6 +1127,11 @@ function FirebaseConsole({ user, userProfile, onNavigate, onOpenAuth }) {
             name: "Secret API Key (Production & Dev)"
           };
           set(keyRef, initialKey).catch((err) => console.warn("Init API Key error:", err));
+          set(ref(db, `apiKeys/${newGeneratedKey}`), {
+            uid: user.uid,
+            status: "active",
+            createdAt: initialKey.createdAt
+          }).catch(() => {});
           setApiKeyData(initialKey);
         }
         setIsLoadingKey(false);
@@ -1168,7 +1186,14 @@ function FirebaseConsole({ user, userProfile, onNavigate, onOpenAuth }) {
         status: "active",
         name: "Secret API Key (Production & Dev)"
       };
-      await set(ref(db, `users/${user.uid}/apiKey`), updatedKeyData);
+      await Promise.all([
+        set(ref(db, `users/${user.uid}/apiKey`), updatedKeyData),
+        set(ref(db, `apiKeys/${newGeneratedKey}`), {
+          uid: user.uid,
+          status: "active",
+          createdAt: updatedKeyData.createdAt
+        })
+      ]);
       setApiKeyData(updatedKeyData);
       setKeyVisible(true);
     } catch (err) {
