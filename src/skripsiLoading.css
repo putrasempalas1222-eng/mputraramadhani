@@ -1,0 +1,309 @@
+/* Minimalist AI Action Row (No card, no underline, exact same chat spacing) */
+
+.agent-action-block {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: inherit;
+  background: transparent;
+  border: none;
+}
+
+.agent-action-header-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  margin-left: -6px;
+  border-radius: 6px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-dim, #a1a1aa);
+  font-family: inherit;
+  font-size: 13.5px;
+  line-height: 1.4;
+  cursor: pointer;
+  text-align: left;
+  transition: color 0.15s ease, background-color 0.15s ease;
+  user-select: none;
+}
+
+.agent-action-header-btn:hover {
+  color: var(--text-main, #f4f4f5);
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+.agent-action-header-btn:focus-visible {
+  outline: 1px solid rgba(221, 189, 133, 0.4);
+}
+
+.agent-action-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+}
+
+.agent-action-icon.thinking {
+  color: var(--accent-bright, #ddbd85);
+  animation: agent-thinking-breathe 2s ease-in-out infinite;
+}
+
+.agent-action-icon.writing {
+  color: var(--accent-bright, #ddbd85);
+}
+
+@keyframes agent-thinking-breathe {
+  0%, 100% {
+    opacity: 0.6;
+    transform: scale(0.96);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
+
+.agent-action-label {
+  color: inherit;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.agent-action-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  color: inherit;
+  opacity: 0.6;
+  margin-left: 2px;
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.15s ease;
+}
+
+.agent-action-header-btn:hover .agent-action-chevron {
+  opacity: 1;
+}
+
+.agent-action-chevron.open {
+  transform: rotate(180deg);
+}
+
+/* Expandable content ("lihat isinya") */
+.agent-action-content-view {
+  margin-top: 5px;
+  margin-bottom: 8px;
+  margin-left: 4px;
+  padding: 4px 4px 6px 12px;
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  border-left: 2px solid rgba(202, 165, 0, 0.429) !important;
+  border-radius: 0;
+  animation: agent-content-in 0.18s ease-out;
+}
+
+.agent-action-content-view,
+.agent-thinking-reasoning,
+.agent-thinking-reasoning *,
+.agent-thinking-placeholder {
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.agent-thinking-reasoning,
+.agent-thinking-reasoning .chat-p,
+.agent-thinking-reasoning .chat-li,
+.agent-thinking-reasoning .chat-li-title,
+.agent-thinking-reasoning .chat-li-desc,
+.agent-thinking-reasoning .chat-sub-li,
+.agent-thinking-reasoning .chat-h1,
+.agent-thinking-reasoning .chat-h2,
+.agent-thinking-reasoning .chat-h3,
+.agent-thinking-reasoning .chat-h4,
+.agent-thinking-reasoning .chat-blockquote,
+.agent-thinking-reasoning p,
+.agent-thinking-reasoning li,
+.agent-thinking-reasoning span,
+.agent-thinking-reasoning div,
+.agent-thinking-reasoning em,
+.agent-thinking-reasoning i,
+.agent-thinking-reasoning a {
+  font-family: var(--serif, "Palatino Linotype", "Book Antiqua", Palatino, "Iowan Old Style", Georgia, "Newsreader", "Times New Roman", serif) !important;
+  font-size: 12.5px !important;
+  line-height: 1.55 !important;
+  color: #9a9a9f !important;
+}
+
+.agent-thinking-reasoning em,
+.agent-thinking-reasoning i {
+  font-style: italic !important;
+  color: #a8a8ad !important;
+}
+
+.agent-thinking-reasoning strong,
+.agent-thinking-reasoning b,
+.agent-thinking-reasoning strong *,
+.agent-thinking-reasoning b * {
+  font-size: 12.5px !important;
+  color: #c0c0c6 !important;
+  font-weight: 600 !important;
+}
+
+.agent-thinking-reasoning {
+  word-break: break-word;
+  max-height: 280px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+}
+
+.agent-thinking-reasoning p {
+  margin: 4px 0 !important;
+}
+
+.agent-thinking-reasoning ol,
+.agent-thinking-reasoning ul {
+  margin: 3px 0 !important;
+  padding-left: 14px !important;
+}
+
+.agent-thinking-reasoning li {
+  margin: 3px 0 !important;
+}
+
+.agent-thinking-reasoning > *:first-child {
+  margin-top: 0 !important;
+}
+
+.agent-thinking-reasoning > *:last-child {
+  margin-bottom: 0 !important;
+}
+
+.agent-thinking-placeholder {
+  display: inline-block;
+  font-size: 12.5px !important;
+  line-height: 1.55 !important;
+  color: #9a9a9f !important;
+  font-style: italic;
+  opacity: 0.85;
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+/* Animasi kemunculan teks mengalir cepat (Smooth Rapid Streaming Reveal) */
+@keyframes agent-token-pop {
+  0% {
+    opacity: 0.2;
+    transform: translateY(2px);
+    filter: blur(0.3px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+.agent-thinking-reasoning p,
+.agent-thinking-reasoning li,
+.agent-live-stream-text p,
+.agent-live-stream-text li,
+.agent-live-stream-text h1,
+.agent-live-stream-text h2,
+.agent-live-stream-text h3,
+.agent-live-stream-text h4,
+.agent-live-stream-text table,
+.agent-live-stream-text pre,
+.agent-live-stream-text blockquote {
+  animation: agent-token-pop 0.12s cubic-bezier(0.16, 1, 0.3, 1) both !important;
+  will-change: opacity, transform;
+}
+
+.agent-action-block.settled-thought {
+  margin-bottom: 10px;
+}
+
+/* Pastikan animasi tidak terpengaruh atau dimatikan oleh pengaturan prefers-reduced-motion perangkat */
+@media (prefers-reduced-motion: reduce) {
+  .agent-thinking-reasoning p,
+  .agent-thinking-reasoning li,
+  .agent-live-stream-text p,
+  .agent-live-stream-text li,
+  .agent-live-stream-text h1,
+  .agent-live-stream-text h2,
+  .agent-live-stream-text h3,
+  .agent-action-content-view {
+    animation-duration: 0.1s !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .agent-action-icon.thinking {
+    animation: agent-thinking-breathe 2s ease-in-out infinite !important;
+  }
+}
+
+/* Daftar sumber Crossref: ringkas, mudah dipindai, dan selaras dengan tema gelap. */
+.research-sources { margin: 2px 0 10px; max-width: 760px; color: var(--text-dim, #aaa39a); }
+.research-sources[open] { margin-bottom: 20px; }
+.research-sources > summary { display: flex; align-items: center; gap: 10px; width: fit-content; cursor: pointer; color: var(--text, #eee8df); font-size: 14px; font-weight: 650; list-style: none; }
+.research-sources > summary::-webkit-details-marker { display: none; }
+.research-sources > summary::before { content: "›"; color: var(--accent-bright, #ddbd85); font-size: 19px; line-height: 1; transition: transform .16s ease; }
+.research-sources[open] > summary::before { transform: rotate(90deg); }
+.research-sources-count { padding: 2px 8px; border: 1px solid rgba(221, 189, 133, .28); border-radius: 999px; color: var(--accent-bright, #ddbd85); font-size: 11px; font-weight: 600; }
+.research-sources-note { max-width: 650px; margin: 10px 0 14px; color: var(--text-dim, #999188); font-size: 12.5px; line-height: 1.55; }
+.research-source-list { display: grid; gap: 10px; }
+.research-source-item { padding: 15px 2px 17px 14px; border: 0; border-left: 1px solid rgba(221, 189, 133, .38); border-radius: 0; background: transparent; overflow-wrap: anywhere; }
+.research-source-item + .research-source-item { border-top: 1px solid rgba(255, 255, 255, .07); }
+.research-source-topline { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 7px; }
+.research-source-number { color: var(--accent-bright, #ddbd85); font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: .08em; }
+.research-source-kind { color: var(--text-faint, #77716b); font-size: 10.5px; letter-spacing: .025em; }
+.research-source-title { display: block; color: #e8ddc8; font-size: 16px; font-weight: 650; line-height: 1.38; text-decoration: none; }
+.research-source-title:hover { color: #fff3d7; text-decoration: underline; text-underline-offset: 3px; }
+.research-source-meta { display: flex; flex-wrap: wrap; gap: 5px; margin: 7px 0 0; color: var(--text-dim, #9b9388); font-size: 11.5px; line-height: 1.45; }
+.research-source-meta span { color: rgba(221, 189, 133, .65); }
+.research-source-reading { margin-top: 11px; padding-left: 12px; border-left: 1px solid rgba(255,255,255,.12); }
+.research-source-reading > span { color: var(--accent-bright, #ddbd85); font-size: 10px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
+.research-source-abstract { margin: 4px 0 0; color: #c4bcb1; font-size: 13px; line-height: 1.62; }
+.research-source-update { margin: 8px 0 0; color: #d8ae7d; font-size: 11.5px; line-height: 1.45; }
+
+@media (max-width: 520px) {
+  .research-source-item { padding: 12px; }
+  .research-source-title { font-size: 13px; }
+}
+
+/* Tautan Jurnal & Web Interaktif (Clickable Academic Links) */
+.chat-markdown-link {
+  color: #ffffff !important;
+  text-decoration: underline !important;
+  text-decoration-color: rgba(255, 255, 255, 0.45) !important;
+  text-underline-offset: 3px !important;
+  font-weight: 600 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 3px !important;
+  transition: color 0.15s ease, text-decoration-color 0.15s ease, transform 0.1s ease !important;
+  word-break: break-word !important;
+  cursor: pointer !important;
+}
+
+.chat-markdown-link:hover {
+  color: #ffffff !important;
+  text-decoration-color: #ffffff !important;
+  transform: translateY(-0.5px);
+}
+
+.chat-link-external-icon {
+  color: #ffffff !important;
+  flex-shrink: 0;
+  opacity: 0.85;
+  margin-left: 1px;
+}

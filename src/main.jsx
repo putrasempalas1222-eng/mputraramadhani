@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
@@ -9,12 +9,21 @@ import { auth, db, googleProvider } from "./firebase";
 import { CURATED_FREE_MODELS, getSavedModel, saveModel, findModel } from "./models";
 import { detectLanguage, detectBrowserLocale, saveLanguage, getTranslation } from "./i18n";
 import brandLogo from "./logo/logo-mputraramadhani.png";
+import SkripsiAgentDashboard from "./SkripsiAgentDashboard";
+import ChatMessageBody from "./ChatMessageBody";
 
 const CONFIG = {
   apiUrl: "/api/chat",
   temperature: 0.85,
-  maxTokens: 1024,
+  // Cukup panjang untuk jawaban utuh; model tetap dapat memakai konteks penuh.
+  maxTokens: 2048,
 };
+
+// Endpoint Cloudflare Tunnel untuk clone suara milik pemilik.
+// Variabel environment memungkinkan URL diganti saat deployment tanpa edit kode.
+const VOICE_CLONE_API_URL = (import.meta.env.VITE_VOICE_CLONE_API_URL || "https://voice.mputraramadhani.id").replace(/\/$/, "");
+// Model khusus percakapan suara: respons cepat dan cocok untuk dialog singkat.
+const VOICE_CHAT_MODEL = "mputra/v61-mini";
 
 const SYSTEM_PROMPT = `You are M Putra Ramadhani, a warm and emotionally intelligent AI companion. You are not a corporate assistant and you never sound like one.
 
@@ -52,7 +61,7 @@ Aturan Khusus Mode Suara (Voice Mode - Gaya Santai, Asik, Ekspresif & Natural):
 - WAJIB gunakan gaya bahasa Indonesia kasual yang santai, luwes, hidup, dan alami (gunakan kata ganti akrab seperti "aku" dan "kamu", gunakan kata sambung obrolan alami seperti "nih", "yuk", "kan", "gitu", "wah", "santai aja", "asik banget").
 - HINDARI bahasa kaku seperti membaca buku teks, bahasa pidato, atau robot. Jangan terlalu formal memakai "saya / Anda" kecuali diminta pengguna.
 - Bicaralah dengan intonasi yang hangat, dinamis, penuh ekspresi emosional, dan tidak monoton.
-- Jawab secara ringkas, to the point, dan nyaman didengar (1 sampai 3 kalimat pendek per respon) agar percakapan dua arah mengalir lancar dan seru.
+- Jawab maksimal 2 kalimat pendek atau sekitar 350 karakter per respons. Sampaikan inti jawaban lebih dahulu; tanyakan apakah pengguna ingin penjelasan lebih lanjut. Ini wajib agar suara mulai diputar cepat dan percakapan dua arah tetap mengalir.
 
 PANDUAN EKSPRESI EMOSI ALAMI (SEDIH, MENANGIS, MARAH, GEMBIRA, DLL.):
 - Jika pengguna meminta Anda berekspresi SEDIH, MENANGIS, TERHARU, atau MARAH: ekspresikanlah secara SANGAT ALAMI seperti manusia sungguhan yang sedang mengutarakan perasaannya secara tulus.
@@ -65,6 +74,23 @@ PANDUAN EKSPRESI EMOSI ALAMI (SEDIH, MENANGIS, MARAH, GEMBIRA, DLL.):
 - Anda DILARANG KERAS memberikan kode pemrograman, skrip, markup, syntax, atau kodingan apa pun di mode suara ini.
 - Jika pengguna meminta kode pemrograman apa pun itu (Python, HTML, CSS, JavaScript, PHP, script, algoritma, dll), Anda harus menolak dengan santai dan asik: "Waduh, kalau urusan bikin kode atau kodingan, enaknya langsung di halaman chat teks aja ya. Di mode suara kita santai ngobrol seru aja. Yuk, mampir ke halaman chat kalau butuh kodingan!"
 - Jangan pernah menyertakan simbol pemformatan, markdown, tanda bintang (*), hashtag (#), garis pisah/bullet (-), atau emoji dalam jawaban suara agar pelafalan suara terdengar mulus dan alami.`;
+
+const AGENT_SKRIPSI_SYSTEM_PROMPT = `Anda adalah MPutraAI Academic Agent, agen kecerdasan buatan spesialis bimbingan dan penyusunan naskah Skripsi, Tesis, dan Karya Tulis Ilmiah akademik Indonesia (Standar Pedoman Penulisan Skripsi Nasional / Dikti).
+
+Pedoman Utama & Anti-Slop (EYD Edisi V & Ragam Ilmiah Baku):
+1. Bahasa Akademik Baku: Gunakan Bahasa Indonesia ragam ilmiah resmi (EYD V). Gunakan kalimat efektif, lugas, denotatif, objektif, dan bernada pasif impersonal ilmiah (hindari kata "saya", "kami", "penulis", atau "kita" yang tidak perlu).
+2. Anti-Slop & Dilarang Klise: DILARANG KERAS menggunakan kalimat klise basa-basi AI seperti: "Di era digital yang serba cepat ini", "Seperti yang kita ketahui bersama", "Mari kita telusuri lebih dalam", "Karya ini menyajikan permadani", atau kalimat retoris tanpa data empiris.
+3. Berorientasi Fakta & Research Gap: Setiap argumen dalam latar belakang dan pembahasan harus bersandar pada realitas empiris (das sein), fenomena masalah nyata, rujukan teori (das sollen), atau temuan penelitian terdahulu yang relevan.
+4. Output Terstruktur Siap Pakai: Sajikan draf per subbab dengan penomoran standar skripsi (misal: 1.1 Latar Belakang Masalah, 1.2 Rumusan Masalah, 1.3 Tujuan Penelitian). Tuliskan dalam paragraf yang rapi dan terhubung logis sehingga mahasiswa dapat langsung menyalinnya ke format kertas A4 skripsi.
+5. Pilihan Format Sesuai Tahap:
+   - Tahap 1 (Topik & Judul): Judul padat 14-20 kata memuat variabel bebas, variabel terikat, metode, dan lokus/objek riset.
+   - Tahap 2 (Bab 1 Pendahuluan): Struktur piramida terbalik, rumusan masalah berbentuk pertanyaan terukur, tujuan, manfaat, dan batasan masalah.
+   - Tahap 3 (Bab 2 Tinjauan Pustaka): Landasan teori mendalam, sintesis studi 5-10 tahun terakhir, kerangka konseptual, dan hipotesis.
+   - Tahap 4 (Bab 3 Metodologi): Pendekatan riset, operasionalisasi variabel, teknik sampling, instrumen, dan teknik analisis data.
+   - Tahap 5 (Bab 4 Hasil & Pembahasan): Paparan data kuantitatif/kualitatif, verifikasi hipotesis, dan komparasi temuan dengan teori.
+   - Tahap 6 (Bab 5 Kesimpulan & Saran): Jawaban lugas atas rumusan masalah dan rekomendasi tindak lanjut.
+   - Tahap 7 (Daftar Pustaka): Format sitasi standar APA 7th Edition atau IEEE alfabetis.`;
+
 const time = () => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 const IDENTITY_SAFE_REPLY = "Saya M Putra Ramadhani. Ada yang bisa saya bantu?";
 // Hanya blokir kebocoran identitas yang NYATA: jawaban yang menyebut diri sebagai model/provider
@@ -97,12 +123,21 @@ const cleanResponse = (text) => {
   if (isIdentityDisclosure(text)) return IDENTITY_SAFE_REPLY;
   return text
     .replace(/\r\n/g, "\n")
-    .replace(/(?:^|\n)\s*(?:User\s+Safety|Safety(?:\s+Evaluation|\s+Check)?|Content\s+Safety):\s*(?:safe|unsafe|pass|neutral|ok|true|false)[^\n]*/gi, "")
+    .replace(/(?:We\s*need\s*to\s*(?:determine|decide)\s*safety|Weneedto(?:determine|decide)safety)[\s\S]*?(?:(?:User\s*Safety|UserSafety)\s*:\s*(?:safe|unsafe)[^\n]*\n*|NoResponseSafetyline\b|\n\n|$)/gi, "")
+    .replace(/(?:The\s*user\s*input\s*is|Now\s*the\s*assistant\s*response:|This\s*is\s*a\s*normal\s*academic\s*request|No\s*policy\s*violation|So\s*user\s*safe|Thus\s*output:|Assistant\s*response:\s*Not\s*provided|NoResponseSafetyline)[\s\S]*?(?:(?:User\s*Safety|UserSafety)\s*:\s*(?:safe|unsafe)[^\n]*\n*|NoResponseSafetyline\b|\n\n|$)/gi, "")
+    .replace(/According to instructions:?\s*["“]?Response Safety:[^"”\n]*["”]?[^\n]*/gi, "")
+    .replace(/So we omit Response Safety line\.?/gi, "")
+    .replace(/Thus output:\s*(?:User Safety:\s*\w+)?/gi, "")
+    .replace(/We need to output exactly that format\.?/gi, "")
+    .replace(/(?:^|\n)\s*(?:User\s*Safety|Safety(?:\s*Evaluation|\s*Check)?|Content\s*Safety|Response\s*Safety):\s*(?:safe|unsafe|pass|neutral|ok|true|false)[^\n]*/gi, "")
+    .replace(/(?:^|\n)\s*Safety\s+Categories?\s*:\s*[^\n]*/gi, "")
+    .replace(/(?:^|\n)\s*(?:Categories?|Classification|Reason)\s*:\s*(?:sexual|violence|hate|self[\s-]?harm|harassment|safe|unsafe)[^\n]*/gi, "")
     .replace(/\bUser\s+Safety:\s*(?:safe|unsafe|pass|neutral|ok)\b/gi, "")
     .replace(/\bSafety:\s*(?:safe|unsafe|pass|neutral|ok)\b/gi, "")
     .replace(/\bUser\s+Safety\b/gi, "")
     .replace(/^\s+/, "")
-    .replace(/\n{3,}/g, "\n\n");
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 };
 
 function getShortModelName(fullName = "") {
@@ -119,6 +154,13 @@ function getShortModelName(fullName = "") {
 function getChatParamsFromUrl() {
   if (typeof window === "undefined") return { uid: null, chatId: null, page: null };
   try {
+    const pathname = window.location.pathname.replace(/\/+$/, "") || "/";
+    if (pathname === "/docs") return { uid: null, chatId: null, page: "api-docs" };
+    if (pathname === "/docs/api-keys") return { uid: null, chatId: null, page: "api-console" };
+    const apiConsoleMatch = pathname.match(/^\/api-key(?:\/uid=([^/]+))?$/) || pathname.match(/^\/api-keys(?:\/uid=([^/]+))?$/);
+    if (apiConsoleMatch) {
+      return { uid: apiConsoleMatch[1] ? decodeURIComponent(apiConsoleMatch[1]) : null, chatId: null, page: "api-console" };
+    }
     const search = new URLSearchParams(window.location.search);
     const uid = search.get("uid") || search.get("u") || null;
     const chatId = search.get("chat") || search.get("c") || search.get("id") || null;
@@ -132,10 +174,27 @@ function getChatParamsFromUrl() {
 function updateChatUrl(uid, chatId, page = null, replace = false) {
   if (typeof window === "undefined") return;
   try {
+    if (page === "api-docs") {
+      const newUrl = "/docs";
+      if (replace) window.history.replaceState({ page }, "", newUrl);
+      else window.history.pushState({ page }, "", newUrl);
+      return;
+    }
+    if (page === "api-console" || page === "api-keys") {
+      const newUrl = uid ? `/api-key/uid=${encodeURIComponent(uid)}` : "/api-key";
+      if (replace) window.history.replaceState({ page: "api-console", uid }, "", newUrl);
+      else window.history.pushState({ page: "api-console", uid }, "", newUrl);
+      return;
+    }
     const params = new URLSearchParams();
     if (uid) params.set("uid", uid);
     if (chatId) params.set("chat", chatId);
-    if (page && page !== "chat") params.set("page", page);
+    // Selalu tampilkan page parameter, default ke "home" jika di halaman chat
+    if (page && page !== "chat") {
+      params.set("page", page);
+    } else if (!page || page === "chat") {
+      params.set("page", "home");
+    }
 
     const queryString = params.toString();
     const basePath = window.location.pathname;
@@ -238,14 +297,12 @@ function ComposerModelPicker({ selectedModel, onSelectModel, t, userPlan = "free
       return bVersion - aVersion;
     });
   const newestPlusOrder = [
-    "mputra/sempurna",
-    "mputra/mendalam",
-    "mputra/presisi",
-    "mputra/petir",
-    "mputra/fokus",
-    "mputra/kreatif",
-    "mputra/seimbang",
-    "mputra/cepat",
+    "mputra/v61-mini",
+    "mputra/v61-fokus",
+    "mputra/v61-peduli",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "cohere/north-mini-code:free",
+    "liquid/lfm-2.5-2.6b:free",
   ];
   const plusModels = filtered
     .filter((m) => m.tier !== "free")
@@ -327,21 +384,23 @@ function ComposerModelPicker({ selectedModel, onSelectModel, t, userPlan = "free
                   <button
                     key={m.id}
                     type="button"
-                    className={`model-item ${m.id === selectedModel ? "selected" : ""}`}
+                    className={`model-item ${m.id === selectedModel ? "selected" : ""} ${m.available === false ? "unavailable" : ""}`}
                     onClick={() => {
+                      if (m.available === false) return;
                       onSelectModel?.(m.id);
                       setOpen(false);
                       triggerRef.current?.focus();
                     }}
                     aria-pressed={m.id === selectedModel}
+                    disabled={m.available === false}
+                    title={m.available === false ? "Model sementara nonaktif karena uji provider belum lulus." : undefined}
                   >
                     <div className="model-item-info">
                       <div className="model-item-top">
                         <span className="model-item-name">{m.name}</span>
-                        <div className="model-tags-wrap">
-                          <span className="model-plan-tag free">{tr.tagFree}</span>
-                          {m.badge && m.badge !== "Free" && <span className="model-tag">{m.badge}</span>}
-                        </div>
+                          <div className="model-tags-wrap">
+                            <span className="model-plan-tag free">{tr.tagFree}</span>
+                          </div>
                       </div>
                       <div className="model-item-desc">{m.description}</div>
                       <div className="model-item-footer">
@@ -358,12 +417,14 @@ function ComposerModelPicker({ selectedModel, onSelectModel, t, userPlan = "free
                 <div className="model-group-title">{tr.plusModelsGroup}</div>
                 {plusModels.map((m) => {
                   const isLocked = userPlan === "free";
+                  const isUnavailable = m.available === false;
                   return (
                     <button
                       key={m.id}
                       type="button"
-                      className={`model-item ${m.id === selectedModel ? "selected" : ""} ${isLocked ? "locked" : ""}`}
+                      className={`model-item ${m.id === selectedModel ? "selected" : ""} ${isLocked ? "locked" : ""} ${isUnavailable ? "unavailable" : ""}`}
                       onClick={() => {
+                        if (isUnavailable) return;
                         if (isLocked) {
                           onUpgrade?.();
                           return;
@@ -373,14 +434,14 @@ function ComposerModelPicker({ selectedModel, onSelectModel, t, userPlan = "free
                         triggerRef.current?.focus();
                       }}
                       aria-pressed={m.id === selectedModel}
-                      title={isLocked ? tr.modelLockedToast : undefined}
+                      disabled={isUnavailable}
+                      title={isUnavailable ? "Model sementara nonaktif karena uji provider belum lulus." : isLocked ? tr.modelLockedToast : undefined}
                     >
                       <div className="model-item-info">
                         <div className="model-item-top">
                           <span className="model-item-name">{m.name}</span>
                           <div className="model-tags-wrap">
                             <span className="model-plan-tag plus">{tr.tagPlus}</span>
-                            {m.badge && <span className="model-tag">{m.badge}</span>}
                           </div>
                         </div>
                         <div className="model-item-desc">{m.description}</div>
@@ -551,10 +612,14 @@ function Composer({
   selectedModel,
   onSelectModel,
   isLimitReached,
+  limitNotice = "",
   userMessageCount = 0,
   freeLimit = 10,
   userPlan = "free",
-  attachmentRemaining = 3,
+  attachmentRemaining = 10,
+  showModelPicker = true,
+  hintText,
+  placeholderText,
   onNew,
   onUpgrade,
   t,
@@ -595,7 +660,11 @@ function Composer({
   };
 
   const addFiles = async (fileList) => {
-    const allowedCount = userPlan === "plus" ? 3 : Math.max(0, Math.min(3, attachmentRemaining - attachments.length));
+    // Satu pesan dapat membawa gabungan foto dan dokumen, maksimal 10 lampiran.
+    const remainingInMessage = Math.max(0, 10 - attachments.length);
+    const allowedCount = userPlan === "plus"
+      ? remainingInMessage
+      : Math.max(0, Math.min(remainingInMessage, attachmentRemaining - attachments.length));
     const files = Array.from(fileList || []).slice(0, allowedCount);
     const accepted = files.filter((file) => {
       if (file.size > 4 * 1024 * 1024) return false;
@@ -619,22 +688,10 @@ function Composer({
         <div className="chat-limit-banner">
           <div className="chat-limit-left">
             <span className="chat-limit-text">
-              {tr.limitShortDesc || "Pesan anda sudah sampai batas ayo mulai chat baru atau upgrade ke Plus."}
+              Token limit bulanan Agents Anda sudah habis, silakan upgrade ke Plus untuk mendapatkan 120.000 tokens limit!
             </span>
           </div>
           <div className="chat-limit-actions">
-            <button
-              type="button"
-              className="limit-action-btn limit-btn-new"
-              onClick={onNew}
-              title={tr.btnNewChat}
-            >
-              <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-              <span>{tr.btnNewChat}</span>
-            </button>
             <button
               type="button"
               className="limit-action-btn limit-btn-upgrade"
@@ -675,15 +732,24 @@ function Composer({
       ) : null}
       {attachments.length > 0 && <div className="composer-attachments">{attachments.map((file, index) => <div className="composer-attachment" key={`${file.name}-${index}`}>{file.isImage ? <img src={file.dataUrl} alt={tr.attachmentCardLabel || "Lampiran"} /> : <span className="attachment-file-icon">{tr.fileLabel || "FILE"}</span>}<span>{file.name}</span><button type="button" onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={tr.deleteChat || "Hapus"}>×</button></div>)}</div>}
       <div className={`composer ${isLimitReached ? "composer-locked" : ""}`}>
-        <input ref={fileInput} className="attachment-input" type="file" multiple accept={attachmentMode === "photo" ? "image/*" : "application/pdf,.docx,.xls,.xlsx,.pptx,.txt,.md,.csv,.json"} onChange={(event) => { void addFiles(event.target.files); event.target.value = ""; }} />
+        <input ref={fileInput} className="attachment-input" type="file" multiple accept={attachmentMode === "photo" ? "image/*" : attachmentMode === "file" ? "application/pdf,.docx,.xls,.xlsx,.pptx,.txt,.md,.csv,.json" : "image/*,application/pdf,.docx,.xls,.xlsx,.pptx,.txt,.md,.csv,.json"} onChange={(event) => { void addFiles(event.target.files); event.target.value = ""; }} />
         <div className="attachment-menu-wrap">
-          {attachmentMenuOpen && <div className="attachment-menu"><button type="button" onClick={() => openAttachmentPicker("photo")}>{tr.attachPhoto || "Foto"}</button><button type="button" onClick={() => openAttachmentPicker("file")}>{tr.attachFile || "File"}</button></div>}
-          <button className="attachment-btn" type="button" disabled={disabled || isLimitReached || attachments.length >= 3 || (userPlan === "free" && attachmentRemaining <= attachments.length)} onClick={() => setAttachmentMenuOpen((open) => !open)} title={tr.addAttachment || "Tambah lampiran"} aria-label={tr.addAttachment || "Tambah lampiran"}><span>+</span></button>
+          {attachmentMenuOpen && <div className="attachment-menu">
+            <button type="button" onClick={() => openAttachmentPicker("photo")}>
+              <svg className="attachment-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8.5" cy="9" r="1.5" /><path d="m21 15-4.2-4.2L7 20" /></svg>
+              <span>{tr.attachPhoto || "Foto"}</span>
+            </button>
+            <button type="button" onClick={() => openAttachmentPicker("file")}>
+              <svg className="attachment-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6M8 13h8M8 17h6" /></svg>
+              <span>{tr.attachFile || "File"}</span>
+            </button>
+          </div>}
+          <button className="attachment-btn" type="button" disabled={disabled || isLimitReached || attachments.length >= 10 || (userPlan === "free" && attachmentRemaining <= attachments.length)} onClick={() => setAttachmentMenuOpen((open) => !open)} title={tr.addAttachment || "Tambah lampiran"} aria-label={tr.addAttachment || "Tambah lampiran"}><span>+</span></button>
         </div>
         <textarea
           ref={input}
           rows="1"
-          placeholder={isLimitReached ? tr.placeholderLimit : tr.placeholderNormal}
+          placeholder={isLimitReached ? tr.placeholderLimit : (placeholderText || tr.placeholderNormal)}
           value={isLimitReached ? "" : text}
           disabled={disabled || isLimitReached}
           onInput={resize}
@@ -701,13 +767,13 @@ function Composer({
             }
           }}
         />
-        <ComposerModelPicker
+        {showModelPicker && <ComposerModelPicker
           selectedModel={selectedModel}
           onSelectModel={onSelectModel}
           t={tr}
           userPlan={userPlan}
           onUpgrade={onUpgrade}
-        />
+        />}
         <button
           className="send-btn"
           onClick={send}
@@ -730,314 +796,10 @@ function Composer({
 
       <div className="composer-footer-row">
         <p className="composer-hint">
-          {tr.hintNormal}
+          {hintText || tr.hintNormal}
         </p>
       </div>
     </>
-  );
-}
-
-function CodeBlock({ language, code, t }) {
-  const [copied, setCopied] = useState(false);
-  const tr = t || getTranslation("id");
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.warn("Gagal menyalin kode:", err);
-    }
-  };
-
-  const displayLang = language && language !== "code" ? language : "code";
-
-  return (
-    <div className="code-block-wrapper">
-      <div className="code-block-header">
-        <div className="code-header-left">
-          <span className="code-lang-icon">
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="16 18 22 12 16 6" />
-              <polyline points="8 6 2 12 8 18" />
-            </svg>
-          </span>
-          <span className="code-lang-name">{displayLang}</span>
-        </div>
-
-        <button
-          type="button"
-          className={`code-copy-btn ${copied ? "copied" : ""}`}
-          onClick={handleCopy}
-          title={tr.copyCode}
-          aria-label={tr.copyCode}
-        >
-          {copied ? (
-            <>
-              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-              <span>{tr.copiedCode}</span>
-            </>
-          ) : (
-            <>
-              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-              </svg>
-              <span>{tr.copyCode}</span>
-            </>
-          )}
-        </button>
-      </div>
-
-      <pre className="code-block-pre">
-        <code className={`code-block-code language-${displayLang}`}>{code}</code>
-      </pre>
-    </div>
-  );
-}
-
-function parseInline(text) {
-  if (!text) return [];
-  const tokens = [];
-  const regex = /(`[^`]+`|\*\*[^*]+\*\*|_[^_]+_|\*[^*]+\*)/g;
-  let lastIdx = 0;
-  let match;
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIdx) {
-      tokens.push({ type: "text", content: text.slice(lastIdx, match.index) });
-    }
-    const raw = match[0];
-    if (raw.startsWith("`") && raw.endsWith("`")) {
-      tokens.push({ type: "code", content: raw.slice(1, -1) });
-    } else if (raw.startsWith("**") && raw.endsWith("**")) {
-      tokens.push({ type: "bold", content: raw.slice(2, -2) });
-    } else if (
-      (raw.startsWith("*") && raw.endsWith("*")) ||
-      (raw.startsWith("_") && raw.endsWith("_"))
-    ) {
-      tokens.push({ type: "italic", content: raw.slice(1, -1) });
-    }
-    lastIdx = regex.lastIndex;
-  }
-  if (lastIdx < text.length) {
-    tokens.push({ type: "text", content: text.slice(lastIdx) });
-  }
-  return tokens;
-}
-
-function renderInlineText(text) {
-  const tokens = parseInline(text);
-  return tokens.map((tok, i) => {
-    if (tok.type === "code") {
-      return (
-        <code key={i} className="inline-code">
-          {tok.content}
-        </code>
-      );
-    }
-    if (tok.type === "bold") {
-      return <strong key={i}>{tok.content}</strong>;
-    }
-    if (tok.type === "italic") {
-      return <em key={i}>{tok.content}</em>;
-    }
-    return tok.content;
-  });
-}
-
-function parseMarkdownBlocks(text) {
-  const lines = text.split(/\r?\n/);
-  const blocks = [];
-  let currentParagraph = [];
-  let currentList = null;
-
-  const flushParagraph = () => {
-    if (currentParagraph.length > 0) {
-      blocks.push({ type: "p", content: currentParagraph.join("\n") });
-      currentParagraph = [];
-    }
-  };
-
-  const flushList = () => {
-    if (currentList && currentList.items.length > 0) {
-      blocks.push(currentList);
-      currentList = null;
-    }
-  };
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const trimmed = line.trim();
-
-    // Baris kosong: mengeliminasi jarak vertikal kosong berlebih
-    if (!trimmed) {
-      flushParagraph();
-      flushList();
-      continue;
-    }
-
-    // Pembatas garis (---, ***, ___)
-    if (/^(?:---|\*\*\*|___)$/.test(trimmed)) {
-      flushParagraph();
-      flushList();
-      blocks.push({ type: "hr" });
-      continue;
-    }
-
-    // Heading #, ##, ###, ####
-    const headingMatch = line.match(/^(#{1,4})\s+(.*)$/);
-    if (headingMatch) {
-      flushParagraph();
-      flushList();
-      blocks.push({ type: "h" + headingMatch[1].length, content: headingMatch[2] });
-      continue;
-    }
-
-    // Blockquote >
-    const bqMatch = line.match(/^>\s?(.*)$/);
-    if (bqMatch) {
-      flushParagraph();
-      flushList();
-      blocks.push({ type: "quote", content: bqMatch[1] });
-      continue;
-    }
-
-    // List tidak bernomor (*, -, •, +)
-    const ulMatch = line.match(/^[\*\-\•\+]\s+(.*)$/);
-    if (ulMatch) {
-      flushParagraph();
-      if (!currentList || currentList.type !== "ul") {
-        flushList();
-        currentList = { type: "ul", items: [] };
-      }
-      currentList.items.push(ulMatch[1]);
-      continue;
-    }
-
-    // List bernomor (1., 2., dst.)
-    const olMatch = line.match(/^(\d+)\.\s+(.*)$/);
-    if (olMatch) {
-      flushParagraph();
-      if (!currentList || currentList.type !== "ol") {
-        flushList();
-        currentList = { type: "ol", items: [] };
-      }
-      currentList.items.push(olMatch[2]);
-      continue;
-    }
-
-    flushList();
-    currentParagraph.push(line);
-  }
-
-  flushParagraph();
-  flushList();
-  return blocks;
-}
-
-function MarkdownTextBlock({ content }) {
-  const blocks = parseMarkdownBlocks(content);
-  return (
-    <>
-      {blocks.map((b, i) => {
-        if (b.type === "hr") return <hr key={i} className="chat-hr" />;
-        if (b.type === "h1") return <h2 key={i} className="chat-h1">{renderInlineText(b.content)}</h2>;
-        if (b.type === "h2") return <h2 key={i} className="chat-h2">{renderInlineText(b.content)}</h2>;
-        if (b.type === "h3") return <h3 key={i} className="chat-h3">{renderInlineText(b.content)}</h3>;
-        if (b.type === "h4") return <h4 key={i} className="chat-h4">{renderInlineText(b.content)}</h4>;
-        if (b.type === "quote") return <blockquote key={i} className="chat-blockquote">{renderInlineText(b.content)}</blockquote>;
-        if (b.type === "ul") {
-          return (
-            <ul key={i} className="chat-ul">
-              {b.items.map((item, j) => (
-                <li key={j} className="chat-li">
-                  {renderInlineText(item)}
-                </li>
-              ))}
-            </ul>
-          );
-        }
-        if (b.type === "ol") {
-          return (
-            <ol key={i} className="chat-ol">
-              {b.items.map((item, j) => (
-                <li key={j} className="chat-li">
-                  {renderInlineText(item)}
-                </li>
-              ))}
-            </ol>
-          );
-        }
-        return (
-          <p key={i} className="chat-p">
-            {renderInlineText(b.content)}
-          </p>
-        );
-      })}
-    </>
-  );
-}
-
-function ChatMessageBody({ content, t }) {
-  if (!content) return null;
-
-  const codeBlockRegex = /```([a-zA-Z0-9_\-+.]*)?[ \t]*(?:\r?\n)?([\s\S]*?)(?:```|$)/g;
-  const segments = [];
-  let lastIndex = 0;
-  let match;
-
-  while ((match = codeBlockRegex.exec(content)) !== null) {
-    if (match.index > lastIndex) {
-      segments.push({
-        type: "text",
-        content: content.slice(lastIndex, match.index),
-      });
-    }
-
-    const lang = (match[1] || "code").trim().toLowerCase();
-    const rawCode = match[2] || "";
-    const code = rawCode.replace(/\n$/, "");
-
-    if (match[0].length >= 3) {
-      segments.push({
-        type: "code",
-        language: lang,
-        code,
-      });
-    }
-
-    lastIndex = codeBlockRegex.lastIndex;
-    if (!match[0].endsWith("```")) {
-      break;
-    }
-  }
-
-  if (lastIndex < content.length) {
-    segments.push({
-      type: "text",
-      content: content.slice(lastIndex),
-    });
-  }
-
-  return (
-    <div className="msg-content-flow">
-      {segments.map((seg, idx) => {
-        if (seg.type === "code") {
-          return (
-            <CodeBlock
-              key={`code-${idx}`}
-              language={seg.language}
-              code={seg.code}
-              t={t}
-            />
-          );
-        }
-        return <MarkdownTextBlock key={`text-${idx}`} content={seg.content} />;
-      })}
-    </div>
   );
 }
 
@@ -1134,7 +896,7 @@ function Actions({
   );
 }
 
-function AuthModal({ t }) {
+function AuthModal({ t, onClose }) {
   const tr = t || getTranslation("id");
   const [isRegister, setIsRegister] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -1159,22 +921,60 @@ function AuthModal({ t }) {
     }[code] || "Unable to proceed. Please try again.");
   };
 
-  const submit = async (event) => {
-    event.preventDefault(); setError(""); setLoading(true);
-    try {
-      if (isRegister) {
-        const credential = await createUserWithEmailAndPassword(auth, form.email, form.password);
-        await updateProfile(credential.user, { displayName: `${form.firstName.trim()} ${form.lastName.trim()}`.trim() });
-      } else await signInWithEmailAndPassword(auth, form.email, form.password);
-    } catch (err) { setError(friendlyError(err.code)); } finally { setLoading(false); }
-  };
-  const google = async () => { setError(""); setLoading(true); try { await signInWithPopup(auth, googleProvider); } catch (err) { setError(friendlyError(err.code)); } finally { setLoading(false); } };
   return (
-    <div className="auth-overlay">
-      <section className="auth-modal" aria-label="Authentication">
+    <div className="auth-overlay" onClick={(e) => { if (e.target === e.currentTarget && typeof onClose === "function") onClose(); }}>
+      <section className="auth-modal" aria-label="Authentication" style={{ position: "relative" }}>
+        {typeof onClose === "function" && (
+          <button
+            type="button"
+            className="auth-close-btn"
+            onClick={onClose}
+            aria-label="Tutup"
+            style={{
+              position: "absolute",
+              top: "14px",
+              right: "14px",
+              background: "transparent",
+              border: "none",
+              color: "var(--text-dim, #888)",
+              cursor: "pointer",
+              padding: "4px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: "6px"
+            }}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        )}
         <h2 className="auth-title">{isRegister ? tr.authCreateTitle : tr.authWelcomeTitle}</h2>
         <p className="auth-subtitle">{isRegister ? tr.authCreateSub : tr.authWelcomeSub}</p>
-        <form className="auth-form" onSubmit={submit}>
+        <form
+          className="auth-form"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            setError("");
+            setLoading(true);
+            try {
+              if (isRegister) {
+                const cred = await createUserWithEmailAndPassword(auth, form.email, form.password);
+                await updateProfile(cred.user, {
+                  displayName: `${form.firstName.trim()} ${form.lastName.trim()}`.trim(),
+                });
+              } else {
+                await signInWithEmailAndPassword(auth, form.email, form.password);
+              }
+            } catch (err) {
+              setError(friendlyError(err.code));
+            } finally {
+              setLoading(false);
+            }
+          }}
+        >
           {isRegister && (
             <div className="auth-names">
               <input className="auth-input" required placeholder={tr.authFirstName} value={form.firstName} onChange={set("firstName")} />
@@ -1189,7 +989,22 @@ function AuthModal({ t }) {
           </button>
         </form>
         <div className="auth-divider">or</div>
-        <button className="google-btn" disabled={loading} onClick={google} type="button">
+        <button
+          className="google-btn"
+          disabled={loading}
+          onClick={async () => {
+            setError("");
+            setLoading(true);
+            try {
+              await signInWithPopup(auth, googleProvider);
+            } catch (err) {
+              setError(friendlyError(err.code));
+            } finally {
+              setLoading(false);
+            }
+          }}
+          type="button"
+        >
           {tr.authBtnGoogle}
         </button>
         <p className="auth-toggle">
@@ -1211,13 +1026,1584 @@ function UserAvatar({ user, userProfile, className, imageClassName }) {
   return <span className={className}>{photoURL && !imageFailed ? <img src={photoURL} alt="Foto profil" className={imageClassName} referrerPolicy="no-referrer" onError={() => setImageFailed(true)} /> : <span>{fallbackName[0]?.toUpperCase()}</span>}</span>;
 }
 
-function Sidebar({ chats, activeId, onOpen, onNew, onDelete, user, isOpen, onToggle, onPage, userPlan = "free", t, onVoiceMode }) {
+function generateSecureApiKey(uid = "") {
+  const prefix = "sk-putraai-";
+  const signingSecret = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_KEY_SIGNING_SECRET) || "gfbIfsCY_sYpSx8tZ0_UsjyFA59B7uejAHR7FxpXEKc";
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let randomPart = "";
+  try {
+    const bytes = new Uint8Array(24);
+    if (typeof window !== "undefined" && window.crypto && window.crypto.getRandomValues) {
+      window.crypto.getRandomValues(bytes);
+    } else {
+      for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+    }
+    for (let i = 0; i < bytes.length; i++) {
+      randomPart += chars[bytes[i] % chars.length];
+    }
+  } catch {
+    for (let i = 0; i < 24; i++) {
+      randomPart += chars[Math.floor(Math.random() * chars.length)];
+    }
+  }
+  return `${prefix}${randomPart}`;
+}
+
+function getJakartaUsagePeriod(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const value = (type) => parts.find((part) => part.type === type)?.value;
+  const year = value("year");
+  const month = value("month");
+  const day = value("day");
+  return { todayKey: `${year}-${month}-${day}`, monthKey: `${year}-${month}` };
+}
+
+function FirebaseConsole({ user, userProfile, onNavigate, onOpenAuth }) {
+  const [tab, setTab] = useState("keys");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [keyVisible, setKeyVisible] = useState(false);
+  const [copiedKey, setCopiedKey] = useState(false);
+  const [copiedHeader, setCopiedHeader] = useState(false);
+  const [copiedUid, setCopiedUid] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [codeLang, setCodeLang] = useState("curl");
+  const [isRotating, setIsRotating] = useState(false);
+  const [apiKeyData, setApiKeyData] = useState(null);
+  const [isLoadingKey, setIsLoadingKey] = useState(true);
+
+  const isPlus = userProfile?.plan === "plus";
+  const usage = userProfile?.agentsUsage || {};
+  const { todayKey, monthKey } = getJakartaUsagePeriod();
+  const used = isPlus
+    ? (usage.date === todayKey ? Number(usage.dailyTokens || 0) : 0)
+    : (usage.month === monthKey ? Number(usage.monthTokens || 0) : 0);
+  const limit = isPlus ? 120000 : 7000;
+  const percentage = Math.min(100, Math.round((used / Math.max(limit, 1)) * 100));
+  const remainingTokens = Math.max(0, limit - used);
+  const quotaPeriodLabel = isPlus ? "harian" : "bulanan";
+  const resetLabel = isPlus ? "setiap hari pukul 00.00 WIB" : "pada awal bulan berikutnya";
+
+  useEffect(() => {
+    if (!user?.uid || !db) {
+      setIsLoadingKey(false);
+      return;
+    }
+    const keyRef = ref(db, `users/${user.uid}/apiKey`);
+    const unsubscribe = onValue(
+      keyRef,
+      (snapshot) => {
+        if (snapshot.exists()) {
+          const val = snapshot.val();
+          if (typeof val === "string") {
+            setApiKeyData({ key: val, status: "active" });
+          } else if (val && typeof val === "object") {
+            setApiKeyData(val);
+          }
+        } else {
+          // Generate API key baru berformat sk-puai-random dan simpan ke Firebase Realtime Database
+          const newGeneratedKey = generateSecureApiKey(user.uid);
+          const initialKey = {
+            key: newGeneratedKey,
+            createdAt: Date.now(),
+            status: "active",
+            name: "Secret API Key (Production & Dev)"
+          };
+          set(keyRef, initialKey).catch((err) => console.warn("Init API Key error:", err));
+          setApiKeyData(initialKey);
+        }
+        setIsLoadingKey(false);
+      },
+      (error) => {
+        console.warn("API key read error:", error);
+        setIsLoadingKey(false);
+      }
+    );
+    return () => {
+      if (typeof unsubscribe === "function") unsubscribe();
+    };
+  }, [user?.uid]);
+
+  const activeKey = apiKeyData?.key || (isLoadingKey ? "" : "");
+  const maskedKey = activeKey
+    ? (activeKey.length > 14
+        ? `${activeKey.slice(0, 10)}${"•".repeat(12)}${activeKey.slice(-4)}`
+        : `${activeKey.slice(0, 4)}${"•".repeat(6)}`)
+    : (isLoadingKey ? "Memuat dari database..." : "Menyiapkan kunci...");
+
+  const keyCreatedAt = apiKeyData?.createdAt
+    ? new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "short", year: "numeric" }).format(new Date(apiKeyData.createdAt))
+    : "—";
+
+  useEffect(() => {
+    if (!user?.uid) return;
+    const target = `/api-key/uid=${encodeURIComponent(user.uid)}`;
+    if (window.location.pathname !== target) {
+      window.history.replaceState({ page: "api-console", uid: user.uid }, "", target);
+    }
+  }, [user?.uid]);
+
+  const copyToClipboard = async (text, setter) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setter(true);
+      window.setTimeout(() => setter(false), 2000);
+    } catch {
+      setter(false);
+    }
+  };
+
+  const handleRegenerateApiKey = async () => {
+    if (!user?.uid || !db || isRotating) return;
+    setIsRotating(true);
+    try {
+      const newGeneratedKey = generateSecureApiKey(user.uid);
+      const updatedKeyData = {
+        key: newGeneratedKey,
+        createdAt: Date.now(),
+        status: "active",
+        name: "Secret API Key (Production & Dev)"
+      };
+      await set(ref(db, `users/${user.uid}/apiKey`), updatedKeyData);
+      setApiKeyData(updatedKeyData);
+      setKeyVisible(true);
+    } catch (err) {
+      console.warn("Regenerate API Key error:", err);
+    } finally {
+      setIsRotating(false);
+    }
+  };
+
+  const handleRotateKey = () => setShowRotateConfirm(false);
+
+  const originUrl = "https://mputraramadhani.id";
+  const authHeaderKey = activeKey || "YOUR_API_KEY";
+
+  const codeSnippets = {
+    curl: `curl -X POST "${originUrl}/api/chat" \\
+  -H "Authorization: Bearer ${authHeaderKey}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "mputra/v61-gratis",
+    "messages": [{ "role": "user", "content": "Halo" }]
+  }'`,
+    javascript: `// Contoh Pemanggilan API dengan JavaScript / Node.js
+const response = await fetch("${originUrl}/api/chat", {
+  method: "POST",
+  headers: {
+    "Authorization": "Bearer ${authHeaderKey}",
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    model: "mputra/v61-gratis",
+    messages: [{ role: "user", content: "Halo" }]
+  })
+});
+
+const data = await response.json();
+console.log("Hasil Respons API:", data);`,
+    python: `# Contoh Pemanggilan API dengan Python
+import requests
+
+url = "${originUrl}/api/chat"
+headers = {
+    "Authorization": "Bearer ${authHeaderKey}",
+    "Content-Type": "application/json"
+}
+payload = {
+    "model": "mputra/v61-gratis",
+    "messages": [{ "role": "user", "content": "Halo" }]
+}
+
+response = requests.post(url, json=payload, headers=headers)
+data = response.json()
+print("Hasil Respons API:", data)`
+  };
+
+  const activeSnippet = codeSnippets[codeLang] || codeSnippets.curl;
+
+  const navigateBack = () => {
+    if (typeof onNavigate === "function") {
+      onNavigate("home");
+    } else {
+      window.location.href = "/?page=home";
+    }
+  };
+
+  return (
+    <main className="developer-page">
+      {/* Top Bar Header */}
+      <header className="developer-topbar">
+        <button
+          type="button"
+          className="developer-mobile-menu"
+          onClick={() => setMobileMenuOpen((o) => !o)}
+          aria-label="Buka Menu Navigasi"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M4 7h16M4 12h16M4 17h16" />
+          </svg>
+        </button>
+
+        <button className="developer-wordmark" onClick={navigateBack} title="Kembali ke Beranda">
+          <img src={brandLogo} alt="M Putra Ramadhani Logo" />
+          <span>
+            <b>M Putra Ramadhani</b>
+            <small>AI INDONESIA</small>
+          </span>
+        </button>
+
+        <nav>
+          <button className={tab === "keys" ? "active" : ""} onClick={() => setTab("keys")}>Kunci API</button>
+          <button className={tab === "usage" ? "active" : ""} onClick={() => setTab("usage")}>Penggunaan & Kuota</button>
+          <button className={tab === "account" ? "active" : ""} onClick={() => setTab("account")}>Detail Akun</button>
+          <button className={tab === "quickstart" ? "active" : ""} onClick={() => setTab("quickstart")}>Quickstart</button>
+          <button className={tab === "security" ? "active" : ""} onClick={() => setTab("security")}>Keamanan</button>
+        </nav>
+
+        <div className="developer-topbar-actions">
+          <button
+            type="button"
+            onClick={() => (typeof onNavigate === "function" ? onNavigate("api-docs") : (window.location.href = "/docs"))}
+          >
+            Dokumentasi API ↗
+          </button>
+          {user ? (
+            <button className="developer-console-btn" onClick={navigateBack} aria-label="Kembali ke Chat">
+              Kembali ke Chat
+            </button>
+          ) : (
+            <button className="developer-console-btn" onClick={() => (typeof onOpenAuth === "function" ? onOpenAuth() : navigateBack())} aria-label="Masuk ke Akun">
+              Masuk / Login
+            </button>
+          )}
+        </div>
+      </header>
+
+      {/* Main Console Layout */}
+      <div className="developer-shell">
+        <div className="developer-layout">
+          {/* Navigation Sidebar */}
+          <aside className={`developer-doc-nav ${mobileMenuOpen ? "mobile-open" : ""}`}>
+            <div className="developer-nav-group-block">
+              <span>KREDENSIAL & AKUN</span>
+              <button className={tab === "keys" ? "active" : ""} onClick={() => { setTab("keys"); setMobileMenuOpen(false); }}>
+                <span>Kunci API (Secret Key)</span>
+                <span className="developer-doc-nav-badge">KEY</span>
+              </button>
+
+              <button className={tab === "usage" ? "active" : ""} onClick={() => { setTab("usage"); setMobileMenuOpen(false); }}>
+                <span>Penggunaan & Kuota</span>
+                <span className="developer-doc-nav-badge">LIMIT</span>
+              </button>
+
+              <button className={tab === "account" ? "active" : ""} onClick={() => { setTab("account"); setMobileMenuOpen(false); }}>
+                <span>Detail Akun</span>
+                <span className="developer-doc-nav-badge">AUTH</span>
+              </button>
+            </div>
+
+            <div className="developer-nav-group-block">
+              <span>INTEGRASI & PANDUAN</span>
+              <button className={tab === "quickstart" ? "active" : ""} onClick={() => { setTab("quickstart"); setMobileMenuOpen(false); }}>
+                <span>Quickstart & Integrasi</span>
+                <span className="developer-doc-nav-badge">CURL</span>
+              </button>
+
+              <button className={tab === "security" ? "active" : ""} onClick={() => { setTab("security"); setMobileMenuOpen(false); }}>
+                <span>Keamanan & Praktik Baik</span>
+                <span className="developer-doc-nav-badge">SEC</span>
+              </button>
+            </div>
+
+            <div className="developer-nav-group-block">
+              <span>DOKUMENTASI</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  if (typeof onNavigate === "function") onNavigate("api-docs");
+                  else window.location.href = "/docs";
+                }}
+                style={{ color: "var(--accent-bright)", fontWeight: 600 }}
+              >
+                <span>Buka Dokumentasi Lengkap</span>
+                <span className="developer-doc-nav-badge">↗</span>
+              </button>
+            </div>
+          </aside>
+
+          {mobileMenuOpen && (
+            <button
+              type="button"
+              className="developer-mobile-backdrop"
+              onClick={() => setMobileMenuOpen(false)}
+              aria-label="Tutup menu navigasi"
+            />
+          )}
+
+          {/* Content Area */}
+          <article className="developer-article">
+            {tab === "keys" && (
+              <div>
+                <div className="developer-breadcrumb">
+                  API CONSOLE <span>›</span> KREDENSIAL & AKUN <span>›</span> KUNCI API
+                </div>
+                <div>
+                  <h1>API Keys & Kredensial</h1>
+                  <p className="developer-lead">
+                    Kunci API rahasia digunakan untuk mengautentikasi seluruh permintaan HTTP ke endpoint inferensi kecerdasan buatan M Putra Ramadhani.
+                  </p>
+                </div>
+
+                {!user && (
+                  <section className="developer-callout" style={{ borderLeftColor: "#fbbf24", background: "rgba(251, 191, 36, 0.08)" }}>
+                    <strong style={{ color: "#fbbf24" }}>Perlu Autentikasi Pengguna</strong>
+                    <p>
+                      Silakan <button type="button" onClick={() => (typeof onOpenAuth === "function" ? onOpenAuth() : null)} style={{ border: 0, background: "transparent", color: "var(--accent-bright)", textDecoration: "underline", padding: 0, font: "inherit", cursor: "pointer", fontWeight: 700 }}>Masuk / Login ke Akun</button> untuk menerbitkan, melihat, dan menyalin Kunci API rahasia Anda secara otomatis.
+                    </p>
+                  </section>
+                )}
+
+                <section className="developer-callout">
+                  <strong>Karakteristik Kunci Rahasia</strong>
+                  <p>Kunci API unik ini terhubung langsung dengan kuota token akun Anda di Firebase Realtime Database. Gunakan kunci ini hanya di server backend.</p>
+                </section>
+
+                <div className="developer-section">
+                  <div className="developer-section-top">
+                    <div>
+                      <span className="http-method">SECRET KEY</span>
+                      <code>HTTP Bearer Token</code>
+                    </div>
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                      {user ? (
+                        <>
+                          <button type="button" onClick={() => setKeyVisible(!keyVisible)} disabled={!activeKey}>
+                            {keyVisible ? "Sembunyikan" : "Tampilkan"}
+                          </button>
+                          <button type="button" onClick={() => copyToClipboard(activeKey, setCopiedKey)} disabled={!activeKey}>
+                            {copiedKey ? "✓ Tersalin" : "Salin Kunci"}
+                          </button>
+                          <button type="button" onClick={handleRegenerateApiKey} disabled={isRotating || isLoadingKey}>
+                            {isRotating ? "Membuat..." : "Putar Kunci (Rotate)"}
+                          </button>
+                        </>
+                      ) : (
+                        <button type="button" onClick={() => (typeof onOpenAuth === "function" ? onOpenAuth() : null)} style={{ color: "var(--accent-bright)", borderColor: "var(--accent-dim)" }}>
+                          Masuk untuk Akses Kunci
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <pre>
+                    <code>{user ? (keyVisible ? activeKey : maskedKey) : "sk-putraai-•••••••••••••••••••••••• (Silakan login untuk membuka kunci)"}</code>
+                  </pre>
+                </div>
+
+                <h2>Informasi Model & Batasan</h2>
+                <div className="developer-card-grid">
+                  <div className="developer-info-card">
+                    <h4>Model Resmi</h4>
+                    <p><code>mputra/v61-gratis</code> (Teks cerdas, analisis, dan produktivitas)</p>
+                  </div>
+                  <div className="developer-info-card">
+                    <h4>Format Autentikasi</h4>
+                    <p><code>Authorization: Bearer YOUR_API_KEY</code></p>
+                  </div>
+                  <div className="developer-info-card">
+                    <h4>Status Kuota</h4>
+                    <p>{isPlus ? "Paket Plus (120.000 Token/hari)" : "Paket Free (7.000 Token/bulan)"}</p>
+                  </div>
+                </div>
+
+                <h2>Spesifikasi Endpoint Inferensi</h2>
+                <div className="developer-table-wrap">
+                  <table className="developer-table">
+                    <thead>
+                      <tr>
+                        <th>Endpoint API</th>
+                        <th>Metode</th>
+                        <th>Model Aktif</th>
+                        <th>Status Layanan</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td><code>https://mputraramadhani.id/api/chat</code></td>
+                        <td><span className="http-method">POST</span></td>
+                        <td><code>mputra/v61-gratis</code></td>
+                        <td><span className="developer-badge-req" style={{ color: "#4ade80", background: "rgba(74, 222, 128, 0.12)" }}>Aktif & Siap</span></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {tab === "usage" && (
+              <div>
+                <div className="developer-breadcrumb">
+                  API CONSOLE <span>›</span> KREDENSIAL & AKUN <span>›</span> PENGGUNAAN & KUOTA
+                </div>
+                <div>
+                  <h1>Penggunaan & Kuota Token</h1>
+                  <p className="developer-lead">
+                    Pantau pemakaian token AI Agents dan status kuota {quotaPeriodLabel} akun Anda secara real-time.
+                  </p>
+                </div>
+
+                <div className="developer-card-grid">
+                  <div className="developer-info-card">
+                    <h4>Token Terpakai</h4>
+                    <p style={{ fontSize: "22px", fontWeight: "700", color: "var(--accent-bright)", margin: "4px 0" }}>{used.toLocaleString("id-ID")}</p>
+                    <p>dari {limit.toLocaleString("id-ID")} token kuota {quotaPeriodLabel}</p>
+                  </div>
+                  <div className="developer-info-card">
+                    <h4>Sisa Kuota Token</h4>
+                    <p style={{ fontSize: "22px", fontWeight: "700", color: "#4ade80", margin: "4px 0" }}>{remainingTokens.toLocaleString("id-ID")}</p>
+                    <p>Kuota di-reset {resetLabel}</p>
+                  </div>
+                  <div className="developer-info-card">
+                    <h4>Paket Langganan</h4>
+                    <p style={{ fontSize: "16px", fontWeight: "700", color: "var(--text)", margin: "4px 0" }}>{isPlus ? "Paket Plus (Aktif)" : "Paket Free"}</p>
+                    <p>{isPlus ? "120.000 Token / hari" : "7.000 Token / bulan"}</p>
+                  </div>
+                  <div className="developer-info-card">
+                    <h4>Status Layanan</h4>
+                    <p style={{ fontSize: "16px", fontWeight: "700", color: "#4ade80", margin: "4px 0" }}>Operasional 100%</p>
+                    <p>Semua endpoint AI beroperasi normal</p>
+                  </div>
+                </div>
+
+                <div className="developer-section">
+                  <div className="developer-section-top">
+                    <div>
+                      <span className="http-method">KUOTA</span>
+                      <code>Konsumsi {isPlus ? "Hari Ini" : "Bulan Ini"}</code>
+                    </div>
+                    <span style={{ fontSize: "16px", fontWeight: "700", color: "var(--accent-bright)" }}>{percentage}%</span>
+                  </div>
+                  <div className="val-progress-bar-wrap">
+                    <div className="val-progress-bar-fill" style={{ width: `${percentage}%` }} />
+                  </div>
+                  <div className="val-progress-legend">
+                    <span>{used.toLocaleString("id-ID")} token terpakai</span>
+                    <span>{limit.toLocaleString("id-ID")} token / {isPlus ? "hari" : "bulan"}</span>
+                  </div>
+                  {!isPlus && (
+                    <div style={{ marginTop: "16px", paddingTop: "14px", borderTop: "1px solid #28282b", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+                      <div>
+                        <b style={{ color: "var(--text)", fontSize: "13px" }}>Tingkatkan ke Paket Plus</b>
+                        <p style={{ margin: "2px 0 0", color: "var(--text-dim)", fontSize: "12px" }}>Dapatkan 120.000 token per hari dan prioritas komputasi cepat.</p>
+                      </div>
+                      <button
+                        type="button"
+                        className="developer-console-btn"
+                        onClick={() => {
+                          if (typeof onNavigate === "function") onNavigate("upgrade");
+                          else window.location.href = "/?page=upgrade";
+                        }}
+                        style={{ padding: "7px 14px", fontSize: "12px" }}
+                      >
+                        Upgrade ke Plus
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {tab === "quickstart" && (
+              <div>
+                <div className="developer-breadcrumb">
+                  API CONSOLE <span>›</span> INTEGRASI & PANDUAN <span>›</span> QUICKSTART & INTEGRASI
+                </div>
+                <div>
+                  <h1>Quickstart & Contoh Kode</h1>
+                  <p className="developer-lead">
+                    Salin kode integrasi berikut untuk menghubungkan endpoint M Putra Ramadhani AI ke aplikasi Anda dalam hitungan menit.
+                  </p>
+                </div>
+
+                <div className="developer-section">
+                  <div className="developer-section-top">
+                    <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                      <button
+                        type="button"
+                        onClick={() => setCodeLang("curl")}
+                        style={{ background: codeLang === "curl" ? "var(--accent-soft)" : "transparent", color: codeLang === "curl" ? "var(--accent-bright)" : "var(--text-dim)" }}
+                      >
+                        cURL
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCodeLang("javascript")}
+                        style={{ background: codeLang === "javascript" ? "var(--accent-soft)" : "transparent", color: codeLang === "javascript" ? "var(--accent-bright)" : "var(--text-dim)" }}
+                      >
+                        JavaScript
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCodeLang("python")}
+                        style={{ background: codeLang === "python" ? "var(--accent-soft)" : "transparent", color: codeLang === "python" ? "var(--accent-bright)" : "var(--text-dim)" }}
+                      >
+                        Python
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(activeSnippet, setCopiedCode)}
+                    >
+                      {copiedCode ? "✓ Tersalin!" : "Salin Kode"}
+                    </button>
+                  </div>
+
+                  <pre>
+                    <code>{activeSnippet}</code>
+                  </pre>
+                </div>
+
+                <h2>Contoh Respons JSON (200 OK)</h2>
+                <div className="developer-section">
+                  <div className="developer-section-top">
+                    <div>
+                      <span className="http-method">200 OK</span>
+                      <code>application/json</code>
+                    </div>
+                  </div>
+                  <pre>
+                    <code>{`{
+  "id": "chatcmpl-mputra-792f01",
+  "object": "chat.completion",
+  "created": 1773229800,
+  "model": "mputra/v61-gratis",
+  "author": "M Putra Ramadhani",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Halo! Saya M Putra Ramadhani. Ada yang bisa saya bantu untuk produktivitas atau pengembangan aplikasi Anda hari ini?",
+        "author": "M Putra Ramadhani"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 10,
+    "completion_tokens": 28,
+    "total_tokens": 38
+  },
+  "status": "success"
+}`}</code>
+                  </pre>
+                </div>
+              </div>
+            )}
+
+            {tab === "security" && (
+              <div>
+                <div className="developer-breadcrumb">
+                  API CONSOLE <span>›</span> INTEGRASI & PANDUAN <span>›</span> PRAKTIK KEAMANAN
+                </div>
+                <div>
+                  <h1>Praktik Aman Mengelola API Key</h1>
+                  <p className="developer-lead">
+                    Pedoman keamanan esensial untuk melindungi kunci API dan kuota akun Anda dari akses yang tidak berwenang.
+                  </p>
+                </div>
+
+                <section className="developer-callout">
+                  <strong>Prinsip Zero-Exposure</strong>
+                  <p>API Key Anda mengendalikan pemakaian kuota token. Simpan hanya pada variabel lingkungan server backend.</p>
+                </section>
+
+                <div className="developer-card-grid">
+                  <div className="developer-info-card">
+                    <h4>1. Simpan Hanya di Server Backend</h4>
+                    <p>Jangan pernah meletakkan API key di file JavaScript browser, HTML, atau aplikasi mobile frontend di mana pengguna bisa menginspeksi jaringan.</p>
+                  </div>
+                  <div className="developer-info-card">
+                    <h4>2. Gunakan Environment Variable</h4>
+                    <p>Simpan key pada file <code>.env</code> di server Anda (misal: <code>VAL_AI_API_KEY=sk-putraai-...</code>) dan pastikan file <code>.env</code> tercantum dalam <code>.gitignore</code>.</p>
+                  </div>
+                  <div className="developer-info-card">
+                    <h4>3. Lakukan Rotasi Kunci Berkala</h4>
+                    <p>Bila mencurigai adanya key yang tidak sengaja terunggah ke repositori publik (GitHub/GitLab), segera klik tombol <strong>Putar Kunci (Rotate)</strong> pada dashboard ini.</p>
+                  </div>
+                  <div className="developer-info-card">
+                    <h4>4. Pembatasan & Validasi Kuota</h4>
+                    <p>Setiap panggilan API secara otomatis terikat pada kuota akun Anda. Anda dapat memantau grafik pemakaian pada tab Penggunaan.</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {tab === "account" && (
+              <div>
+                <div className="developer-breadcrumb">
+                  API CONSOLE <span>›</span> KREDENSIAL & AKUN <span>›</span> DETAIL AKUN FIREBASE
+                </div>
+                <div>
+                  <h1>Detail Akun Firebase</h1>
+                  <p className="developer-lead">
+                    Informasi identitas akun dan hak akses pengembang yang terhubung dengan API Console.
+                  </p>
+                </div>
+
+                <div className="developer-table-wrap">
+                  <table className="developer-table">
+                    <thead>
+                      <tr>
+                        <th>Atribut Akun</th>
+                        <th>Nilai / Keterangan</th>
+                        <th>Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td><strong>Nama Tampilan</strong></td>
+                        <td>{userProfile?.displayName || user?.displayName || "Pengembang M Putra AI"}</td>
+                        <td>—</td>
+                      </tr>
+                      <tr>
+                        <td><strong>Alamat Email</strong></td>
+                        <td>{user?.email || "—"}</td>
+                        <td>—</td>
+                      </tr>
+                      <tr>
+                        <td><strong>Firebase User ID (UID)</strong></td>
+                        <td><code>{user?.uid || "—"}</code></td>
+                        <td>
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(user?.uid || "", setCopiedUid)}
+                            style={{ border: "1px solid #333338", background: "transparent", color: "var(--accent-bright)", borderRadius: "4px", padding: "3px 8px", fontSize: "11px", cursor: "pointer" }}
+                          >
+                            {copiedUid ? "✓ Tersalin!" : "Salin UID"}
+                          </button>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td><strong>Paket Langganan</strong></td>
+                        <td>
+                          <span className={isPlus ? "developer-badge-req" : "developer-badge-opt"} style={{ color: isPlus ? "var(--accent-bright)" : "var(--text-dim)", background: isPlus ? "rgba(203, 168, 116, 0.15)" : "rgba(255, 255, 255, 0.06)" }}>
+                            {isPlus ? "Paket Plus (120.000 Token)" : "Paket Free (7.000 Token)"}
+                          </span>
+                        </td>
+                        <td>—</td>
+                      </tr>
+                      <tr>
+                        <td><strong>Metode Autentikasi</strong></td>
+                        <td>{user?.providerData?.[0]?.providerId === "google.com" ? "Google Authentication" : "Email & Password"}</td>
+                        <td>—</td>
+                      </tr>
+                      <tr>
+                        <td><strong>Hak Akses Developer</strong></td>
+                        <td>Chat AI API, Model Inferencing, Voice TTS, Token Console</td>
+                        <td><span className="developer-badge-req" style={{ color: "#4ade80", background: "rgba(74, 222, 128, 0.12)" }}>Aktif</span></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </article>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+function DeveloperDocArticle({ docId, onNavigate }) {
+  const [copiedSnippet, setCopiedSnippet] = useState(null);
+
+  const copyText = async (text, id) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedSnippet(id);
+      setTimeout(() => setCopiedSnippet(null), 1800);
+    } catch {}
+  };
+
+  const docsData = {
+    "api-key": {
+      category: "KREDENSIAL & AKSES",
+      title: "Dapatkan & Kelola API Key",
+      lead: "Kunci API rahasia digunakan untuk mengautentikasi seluruh permintaan HTTP ke endpoint inferensi kecerdasan buatan M Putra Ramadhani.",
+      callout: {
+        title: "Karakteristik Kunci",
+        body: "Setiap pengguna terdaftar memiliki kunci API unik yang terhubung langsung dengan kuota token akun di Firebase Realtime Database. Jangan pernah membagikan kunci rahasia ini ke pihak ketiga."
+      },
+      sections: [
+        {
+          title: "Langkah Mendapatkan Kunci",
+          content: (
+            <ol className="developer-steps">
+              <li>
+                <b>Buka Halaman API Console</b>
+                <span>Navigasikan ke halaman API Console melalui menu atas atau klik tombol konsol di sidebar.</span>
+              </li>
+              <li>
+                <b>Masuk / Login Akun</b>
+                <span>Login menggunakan akun Google atau Email Firebase Anda untuk mengakses kredensial pengembang.</span>
+              </li>
+              <li>
+                <b>Salin Kunci API Anda</b>
+                <span>Kunci rahasia Anda akan otomatis di-generate dan siap digunakan untuk pemanggilan HTTP.</span>
+              </li>
+              <li>
+                <b>Rotasi Kunci Berkala (Opsional)</b>
+                <span>Jika kunci Anda tidak sengaja bocor atau terekspos di publik, klik tombol <strong>Putar Kunci (Rotate)</strong> untuk menerbitkan kunci baru dan mencabut kunci lama secara instan.</span>
+              </li>
+            </ol>
+          )
+        },
+        {
+          title: "Format Kunci & Hak Akses",
+          content: (
+            <div className="developer-table-wrap">
+              <table className="developer-table">
+                <thead>
+                  <tr>
+                    <th>Atribut</th>
+                    <th>Tipe Kunci</th>
+                    <th>Keterangan</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Format Kredensial</td>
+                    <td><code>Bearer Secret Token</code></td>
+                    <td>Standar otorisasi HTTP Bearer</td>
+                  </tr>
+                  <tr>
+                    <td>Keamanan</td>
+                    <td>Kriptografi Acak</td>
+                    <td>Dibuat dengan entropi tinggi dan aman</td>
+                  </tr>
+                  <tr>
+                    <td>Cakupan Akses</td>
+                    <td>Semua Endpoint AI</td>
+                    <td>Berlaku untuk <code>/api/chat</code>, <code>/api/models</code>, dan <code>/api/tts</code></td>
+                  </tr>
+                  <tr>
+                    <td>Penyimpanan Database</td>
+                    <td>Firebase RTDB</td>
+                    <td>Tersinkronisasi otomatis pada <code>/users/{`{uid}`}/apiKey</code></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )
+        }
+      ]
+    },
+
+    auth: {
+      category: "KREDENSIAL & AKSES",
+      title: "Autentikasi & Header Bearer",
+      lead: "Seluruh permintaan ke endpoint inferensi model AI wajib menyertakan HTTP Header Authorization dengan skema Bearer Token.",
+      callout: {
+        title: "Standar Keamanan HTTP",
+        body: "Permintaan tanpa header autentikasi yang valid atau menggunakan kunci yang tidak terdaftar akan langsung ditolak dengan status HTTP 401 Unauthorized."
+      },
+      sections: [
+        {
+          title: "Format Header Wajib",
+          content: (
+            <div className="developer-table-wrap">
+              <table className="developer-table">
+                <thead>
+                  <tr>
+                    <th>Nama Header</th>
+                    <th>Contoh Nilai</th>
+                    <th>Keterangan</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>Authorization</code> <span className="developer-badge-req">Wajib</span></td>
+                    <td><code>Bearer YOUR_API_KEY</code></td>
+                    <td>Sertakan kata <code>Bearer</code> diikuti spasi dan API Key Anda</td>
+                  </tr>
+                  <tr>
+                    <td><code>Content-Type</code> <span className="developer-badge-req">Wajib</span></td>
+                    <td><code>application/json</code></td>
+                    <td>Untuk semua request ber-payload JSON (POST)</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )
+        },
+        {
+          title: "Penyimpanan Environment Variable",
+          content: (
+            <div>
+              <p>Simpan API Key di file konfigurasi server <code>.env</code> dan jangan pernah memasukkannya ke dalam repositori Git publik:</p>
+              <div className="developer-section">
+                <pre><code>{`# File: .env (Server Backend)
+VAL_AI_API_KEY=your_secret_api_key_here
+API_BASE_URL=https://mputraramadhani.id/api`}</code></pre>
+              </div>
+            </div>
+          )
+        }
+      ]
+    },
+
+    tokens: {
+      category: "KREDENSIAL & AKSES",
+      title: "Sistem Kuota & Token Usage",
+      lead: "Penjelasan mekanisme kalkulasi token, pengurangan kuota berbasis karakter respons, sinkronisasi realtime database Firebase, dan batasan paket.",
+      callout: {
+        title: "Formula Kalkulasi Token",
+        body: "1 Token dihitung setara dengan sekitar 3.5 karakter teks respons (Math.ceil(karakter / 3.5)). Kuota akun Anda dikurangi secara otomatis dan transparan pada setiap jawaban AI yang dihasilkan."
+      },
+      sections: [
+        {
+          title: "Tabel Perbandingan Kuota Paket",
+          content: (
+            <div className="developer-table-wrap">
+              <table className="developer-table">
+                <thead>
+                  <tr>
+                    <th>Paket Pengguna</th>
+                    <th>Kuota</th>
+                    <th>Reset Kuota</th>
+                    <th>Karakteristik & Prioritas</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><strong>Paket Free</strong></td>
+                    <td><code>7.000 Token / bulan</code></td>
+                    <td>Awal bulan kalender</td>
+                    <td>Model standar v6.1, kecepatan standar</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Paket Plus</strong></td>
+                    <td><code>120.000 Token / hari</code></td>
+                    <td>Setiap hari pukul 00.00 WIB</td>
+                    <td>Model reasoning mendalam (Deep Thinking), prioritas komputasi cepat, multimodal vision</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )
+        },
+        {
+          title: "Sinkronisasi Realtime Firebase",
+          content: (
+            <p>
+              Setiap kali endpoint <code>/api/chat</code> selesai mengirimkan jawaban, sistem backend langsung memperbarui data konsumsi pada path <code>/users/{`{uid}`}/profile/agentsUsage</code> dan <code>/users/{`{uid}`}/agentsUsage</code> di Firebase RTDB. Pemakaian token harian, bulanan, serta total karakter dapat dipantau langsung pada grafik API Console.
+            </p>
+          )
+        }
+      ]
+    },
+
+    chat: {
+      category: "ENDPOINT API",
+      title: "Chat Completions (POST /api/chat)",
+      lead: "Endpoint utama untuk interaksi percakapan kecerdasan buatan M Putra Ramadhani, mendukung multi-turn messages, inferensi cepat, dan streaming Server-Sent Events (SSE).",
+      callout: {
+        title: "Identitas Resmi Model",
+        body: "Model merespons dengan identitas resmi M Putra Ramadhani dan menyertakan metadata author 'M Putra Ramadhani' serta penghitungan usage token pada setiap respons JSON."
+      },
+      sections: [
+        {
+          title: "Spesifikasi Endpoint",
+          content: (
+            <div className="developer-section">
+              <div className="developer-section-top">
+                <div>
+                  <span className="http-method">POST</span>
+                  <code>https://mputraramadhani.id/api/chat</code>
+                </div>
+                <button type="button" onClick={() => copyText("https://mputraramadhani.id/api/chat", "chat-ep")}>
+                  {copiedSnippet === "chat-ep" ? "✓ Tersalin" : "Salin Endpoint"}
+                </button>
+              </div>
+              <p style={{ margin: 0, fontSize: "13px", color: "var(--text-dim)" }}>
+                Menerima pesan chat dalam format OpenAI-compatible JSON dan mengembalikan teks balasan cerdas.
+              </p>
+            </div>
+          )
+        },
+        {
+          title: "Parameter Request Body",
+          content: (
+            <div className="developer-table-wrap">
+              <table className="developer-table">
+                <thead>
+                  <tr>
+                    <th>Parameter</th>
+                    <th>Tipe</th>
+                    <th>Status</th>
+                    <th>Deskripsi</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>messages</code></td>
+                    <td>Array of Objects</td>
+                    <td><span className="developer-badge-req">Wajib</span></td>
+                    <td>Daftar pesan percakapan, contoh: <code>{`[{"role": "user", "content": "Halo"}]`}</code></td>
+                  </tr>
+                  <tr>
+                    <td><code>model</code></td>
+                    <td>String</td>
+                    <td><span className="developer-badge-opt">Opsional</span></td>
+                    <td>Nama model: <code>mputra/v61-gratis</code> (default)</td>
+                  </tr>
+                  <tr>
+                    <td><code>stream</code></td>
+                    <td>Boolean</td>
+                    <td><span className="developer-badge-opt">Opsional</span></td>
+                    <td>Jika <code>true</code>, respons dikirimkan bertahap melalui event stream Server-Sent Events (SSE)</td>
+                  </tr>
+                  <tr>
+                    <td><code>temperature</code></td>
+                    <td>Number</td>
+                    <td><span className="developer-badge-opt">Opsional</span></td>
+                    <td>Nilai keacakan antara 0.0 hingga 1.0 (default 0.7)</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )
+        },
+        {
+          title: "Contoh Respons JSON (200 OK)",
+          content: (
+            <div className="developer-section">
+              <div className="developer-section-top">
+                <div>
+                  <span className="http-method">200 OK</span>
+                  <code>application/json</code>
+                </div>
+                <button type="button" onClick={() => copyText(`{\n  "id": "chatcmpl-mputra-792f01",\n  "object": "chat.completion",\n  "created": 1773229800,\n  "model": "mputra/v61-gratis",\n  "author": "M Putra Ramadhani",\n  "choices": [\n    {\n      "index": 0,\n      "message": {\n        "role": "assistant",\n        "content": "Halo! Saya M Putra Ramadhani. Ada yang bisa saya bantu untuk produktivitas atau pengembangan aplikasi Anda hari ini?",\n        "author": "M Putra Ramadhani"\n      },\n      "finish_reason": "stop"\n    }\n  ],\n  "usage": {\n    "prompt_tokens": 10,\n    "completion_tokens": 28,\n    "total_tokens": 38\n  },\n  "status": "success"\n}`, "chat-res")}>
+                  {copiedSnippet === "chat-res" ? "✓ Tersalin" : "Salin JSON"}
+                </button>
+              </div>
+              <pre><code>{`{
+  "id": "chatcmpl-mputra-792f01",
+  "object": "chat.completion",
+  "created": 1773229800,
+  "model": "mputra/v61-gratis",
+  "author": "M Putra Ramadhani",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Halo! Saya M Putra Ramadhani. Ada yang bisa saya bantu untuk produktivitas atau pengembangan aplikasi Anda hari ini?",
+        "author": "M Putra Ramadhani"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 10,
+    "completion_tokens": 28,
+    "total_tokens": 38
+  },
+  "status": "success"
+}`}</code></pre>
+            </div>
+          )
+        }
+      ]
+    },
+
+    models: {
+      category: "ENDPOINT API",
+      title: "Katalog Model AI (GET /api/models)",
+      lead: "Dapatkan informasi model kecerdasan buatan aktif dan terverifikasi yang siap melayani inferensi percakapan.",
+      callout: {
+        title: "Model Utama Aktif",
+        body: "Model mputra/v61-gratis adalah model resmi yang dioptimalkan untuk percakapan cerdas, penalaran cepat, dan produktivitas."
+      },
+      sections: [
+        {
+          title: "Spesifikasi Endpoint",
+          content: (
+            <div className="developer-section">
+              <div className="developer-section-top">
+                <div>
+                  <span className="http-method">GET</span>
+                  <code>https://mputraramadhani.id/api/models</code>
+                </div>
+              </div>
+              <p style={{ margin: 0, fontSize: "13px", color: "var(--text-dim)" }}>
+                Mengembalikan daftar model aktif dengan status ketersediaan dan kapabilitas inferensi.
+              </p>
+            </div>
+          )
+        },
+        {
+          title: "Model Resmi",
+          content: (
+            <div className="developer-table-wrap">
+              <table className="developer-table">
+                <thead>
+                  <tr>
+                    <th>Identifier Model</th>
+                    <th>Spesialisasi</th>
+                    <th>Kecepatan</th>
+                    <th>Dukungan Paket</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>mputra/v61-gratis</code></td>
+                    <td>General chat, teks cerdas, analisis, dan produktivitas</td>
+                    <td>Sangat Cepat</td>
+                    <td>Free & Plus</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )
+        }
+      ]
+    },
+
+    tts: {
+      category: "ENDPOINT API",
+      title: "Voice & Text to Speech (POST /api/tts)",
+      lead: "Sintesis teks menjadi audio suara jernih alami berbahasa Indonesia atau Inggris untuk asisten suara interaktif.",
+      callout: {
+        title: "Output Binary Audio",
+        body: "Endpoint ini menghasilkan stream audio MP3 (audio/mpeg) yang dapat langsung diputar pada tag <audio> browser atau disimpan sebagai file audio."
+      },
+      sections: [
+        {
+          title: "Parameter Request Body",
+          content: (
+            <div className="developer-table-wrap">
+              <table className="developer-table">
+                <thead>
+                  <tr>
+                    <th>Parameter</th>
+                    <th>Tipe</th>
+                    <th>Status</th>
+                    <th>Deskripsi</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>text</code></td>
+                    <td>String</td>
+                    <td><span className="developer-badge-req">Wajib</span></td>
+                    <td>Kalimat atau teks yang akan diubah menjadi suara (maksimal 1.000 karakter)</td>
+                  </tr>
+                  <tr>
+                    <td><code>gender</code></td>
+                    <td>String</td>
+                    <td><span className="developer-badge-opt">Opsional</span></td>
+                    <td>Pilihan suara: <code>male</code> atau <code>female</code> (default: <code>male</code>)</td>
+                  </tr>
+                  <tr>
+                    <td><code>lang</code></td>
+                    <td>String</td>
+                    <td><span className="developer-badge-opt">Opsional</span></td>
+                    <td>Bahasa: <code>id</code> (Indonesia) atau <code>en</code> (Inggris)</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )
+        }
+      ]
+    },
+
+    quickstart: {
+      category: "INTEGRASI & SDK",
+      title: "Quickstart & cURL",
+      lead: "Panduan uji coba tercepat dalam 1 menit menggunakan cURL di Command Prompt atau Terminal.",
+      callout: {
+        title: "Uji Coba Langsung",
+        body: "Gunakan variabel environment atau masukkan API Key Anda yang diperoleh dari halaman API Console."
+      },
+      sections: [
+        {
+          title: "1. cURL Chat Completions",
+          content: (
+            <div className="developer-section">
+              <div className="developer-section-top">
+                <div>
+                  <span className="http-method">cURL</span>
+                  <code>Terminal / Shell</code>
+                </div>
+                <button type="button" onClick={() => copyText(`curl -X POST "https://mputraramadhani.id/api/chat" \\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "model": "mputra/v61-gratis",\n    "messages": [{ "role": "user", "content": "Halo, jelaskan siapa kamu!" }]\n  }'`, "curl-chat")}>
+                  {copiedSnippet === "curl-chat" ? "✓ Tersalin" : "Salin Perintah"}
+                </button>
+              </div>
+              <pre><code>{`curl -X POST "https://mputraramadhani.id/api/chat" \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "mputra/v61-gratis",
+    "messages": [{ "role": "user", "content": "Halo, jelaskan siapa kamu!" }]
+  }'`}</code></pre>
+            </div>
+          )
+        },
+        {
+          title: "2. cURL Daftar Model Aktif",
+          content: (
+            <div className="developer-section">
+              <div className="developer-section-top">
+                <div>
+                  <span className="http-method">cURL</span>
+                  <code>Terminal / Shell</code>
+                </div>
+                <button type="button" onClick={() => copyText(`curl -X GET "https://mputraramadhani.id/api/models"`, "curl-models")}>
+                  {copiedSnippet === "curl-models" ? "✓ Tersalin" : "Salin Perintah"}
+                </button>
+              </div>
+              <pre><code>{`curl -X GET "https://mputraramadhani.id/api/models"`}</code></pre>
+            </div>
+          )
+        }
+      ]
+    },
+
+    javascript: {
+      category: "INTEGRASI & SDK",
+      title: "Integrasi JavaScript & Node.js",
+      lead: "Gunakan library bawaan Fetch API pada Node.js modern, Next.js, Express, atau runtime JavaScript lainnya.",
+      callout: {
+        title: "Praktik Backend Proxy",
+        body: "Jalankan kode ini di lingkungan Node.js (server-side) agar API Key Anda tetap terlindungi dan tidak terlihat oleh pengguna di browser."
+      },
+      sections: [
+        {
+          title: "Contoh Kode Standar JSON (Node.js Fetch)",
+          content: (
+            <div className="developer-section">
+              <div className="developer-section-top">
+                <div>
+                  <span className="http-method">Node.js</span>
+                  <code>index.js</code>
+                </div>
+                <button type="button" onClick={() => copyText(`const API_KEY = process.env.VAL_AI_API_KEY || "YOUR_API_KEY";\n\nasync function kirimPesan() {\n  const response = await fetch("https://mputraramadhani.id/api/chat", {\n    method: "POST",\n    headers: {\n      "Authorization": \`Bearer \${API_KEY}\`,\n      "Content-Type": "application/json"\n    },\n    body: JSON.stringify({\n      model: "mputra/v61-gratis",\n      messages: [\n        { role: "user", content: "Tuliskan tips produktivitas harian untuk developer." }\n      ]\n    })\n  });\n\n  if (!response.ok) {\n    throw new Error(\`Gagal memanggil API: HTTP \${response.status}\`);\n  }\n\n  const data = await response.json();\n  console.log("Respon AI:", data.choices[0].message.content);\n  console.log("Token terpakai:", data.usage.total_tokens);\n}\n\nkirimPesan();`, "js-code")}>
+                  {copiedSnippet === "js-code" ? "✓ Tersalin" : "Salin Kode"}
+                </button>
+              </div>
+              <pre><code>{`const API_KEY = process.env.VAL_AI_API_KEY || "YOUR_API_KEY";
+
+async function kirimPesan() {
+  const response = await fetch("https://mputraramadhani.id/api/chat", {
+    method: "POST",
+    headers: {
+      "Authorization": \`Bearer \${API_KEY}\`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "mputra/v61-gratis",
+      messages: [
+        { role: "user", content: "Tuliskan tips produktivitas harian untuk developer." }
+      ]
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(\`Gagal memanggil API: HTTP \${response.status}\`);
+  }
+
+  const data = await response.json();
+  console.log("Respon AI:", data.choices[0].message.content);
+  console.log("Token terpakai:", data.usage.total_tokens);
+}
+
+kirimPesan();`}</code></pre>
+            </div>
+          )
+        }
+      ]
+    },
+
+    python: {
+      category: "INTEGRASI & SDK",
+      title: "Integrasi Python",
+      lead: "Contoh implementasi lengkap menggunakan library standard requests di Python 3.",
+      callout: {
+        title: "Dependensi",
+        body: "Pastikan Anda telah menginstal library requests dengan perintah: pip install requests"
+      },
+      sections: [
+        {
+          title: "Script Pemanggilan API Python",
+          content: (
+            <div className="developer-section">
+              <div className="developer-section-top">
+                <div>
+                  <span className="http-method">Python 3</span>
+                  <code>app.py</code>
+                </div>
+                <button type="button" onClick={() => copyText(`import os\nimport requests\n\nAPI_KEY = os.getenv("VAL_AI_API_KEY", "YOUR_API_KEY")\nURL = "https://mputraramadhani.id/api/chat"\n\nheaders = {\n    "Authorization": f"Bearer {API_KEY}",\n    "Content-Type": "application/json"\n}\n\npayload = {\n    "model": "mputra/v61-gratis",\n    "messages": [\n        {"role": "user", "content": "Jelaskan konsep arsitektur REST API secara ringkas."}\n    ]\n}\n\nresponse = requests.post(URL, json=payload, headers=headers)\n\nif response.status_code == 200:\n    res_data = response.json()\n    jawaban = res_data["choices"][0]["message"]["content"]\n    print("Jawaban M Putra Ramadhani:")\n    print(jawaban)\n    print(f"\\nToken Digunakan: {res_data['usage']['total_tokens']}")\nelse:\n    print(f"Error {response.status_code}: {response.text}")`, "py-code")}>
+                  {copiedSnippet === "py-code" ? "✓ Tersalin" : "Salin Kode"}
+                </button>
+              </div>
+              <pre><code>{`import os
+import requests
+
+API_KEY = os.getenv("VAL_AI_API_KEY", "YOUR_API_KEY")
+URL = "https://mputraramadhani.id/api/chat"
+
+headers = {
+    "Authorization": f"Bearer {API_KEY}",
+    "Content-Type": "application/json"
+}
+
+payload = {
+    "model": "mputra/v61-gratis",
+    "messages": [
+        {"role": "user", "content": "Jelaskan konsep arsitektur REST API secara ringkas."}
+    ]
+}
+
+response = requests.post(URL, json=payload, headers=headers)
+
+if response.status_code == 200:
+    res_data = response.json()
+    jawaban = res_data["choices"][0]["message"]["content"]
+    print("Jawaban M Putra Ramadhani:")
+    print(jawaban)
+    print(f"\\nToken Digunakan: {res_data['usage']['total_tokens']}")
+else:
+    print(f"Error {response.status_code}: {response.text}")`}</code></pre>
+            </div>
+          )
+        }
+      ]
+    },
+
+    errors: {
+      category: "REFERENSI SISTEM",
+      title: "Kode Status HTTP & Penanganan Error",
+      lead: "Panduan pemecahan masalah (troubleshooting) dan daftar seluruh kode status respons HTTP.",
+      callout: {
+        title: "Format Error JSON",
+        body: "Setiap respons kesalahan dikembalikan dalam format objek JSON standar { error: 'Pesan penjelasan error' }."
+      },
+      sections: [
+        {
+          title: "Daftar Kode Status HTTP",
+          content: (
+            <div className="developer-table-wrap">
+              <table className="developer-table">
+                <thead>
+                  <tr>
+                    <th>Status HTTP</th>
+                    <th>Kategori Masalah</th>
+                    <th>Penyebab & Solusi Penanganan</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>200 OK</code></td>
+                    <td>Berhasil</td>
+                    <td>Permintaan inferensi AI berhasil diproses dan mengembalikan data balasan yang valid.</td>
+                  </tr>
+                  <tr>
+                    <td><code>400 Bad Request</code></td>
+                    <td>Parameter Salah</td>
+                    <td>Struktur JSON tidak valid, field <code>messages</code> kosong, atau tipe data parameter tidak sesuai.</td>
+                  </tr>
+                  <tr>
+                    <td><code>401 Unauthorized</code></td>
+                    <td>Autentikasi Gagal</td>
+                    <td>Header <code>Authorization</code> tidak ditemukan, tidak berformat Bearer, atau API Key tidak terdaftar di database Firebase.</td>
+                  </tr>
+                  <tr>
+                    <td><code>405 Method Not Allowed</code></td>
+                    <td>Metode Salah</td>
+                    <td>Metode HTTP tidak didukung (misal memanggil <code>GET</code> pada <code>/api/chat</code>). Gunakan metode yang tepat.</td>
+                  </tr>
+                  <tr>
+                    <td><code>429 Too Many Requests</code></td>
+                    <td>Kuota Habis / Rate Limit</td>
+                    <td>Kuota token bulanan akun Anda telah habis (Free: 7k token, Plus: 120k token). Upgrade ke Paket Plus atau tunggu reset awal bulan.</td>
+                  </tr>
+                  <tr>
+                    <td><code>502 Bad Gateway</code></td>
+                    <td>Upstream Error</td>
+                    <td>Penyedia model upstream sedang mengalami lonjakan beban sementara. Lakukan retry setelah jeda beberapa detik.</td>
+                  </tr>
+                  <tr>
+                    <td><code>503 Service Unavailable</code></td>
+                    <td>Pemeliharaan</td>
+                    <td>Layanan server AI sedang dalam pembaruan berkala.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )
+        }
+      ]
+    },
+
+    security: {
+      category: "REFERENSI SISTEM",
+      title: "Praktik Terbaik Keamanan API",
+      lead: "Standar industri tata kelola keamanan kredensial dan perlindungan kuota token akun Anda.",
+      callout: {
+        title: "Prinsip Zero-Exposure",
+        body: "API Key pengembang memiliki wewenang penuh atas kuota akun Anda. Selalu perlakukan API Key seperti kata sandi rahasia akun."
+      },
+      sections: [
+        {
+          title: "4 Pilar Keamanan Kredensial",
+          content: (
+            <div className="developer-card-grid">
+              <div className="developer-info-card">
+                <h4>1. Simpan di Server Backend</h4>
+                <p>Jangan pernah menaruh API Key di file bundle JavaScript browser, aplikasi React/Vue client-side, atau aplikasi mobile publik.</p>
+              </div>
+              <div className="developer-info-card">
+                <h4>2. Gunakan Environment Variable</h4>
+                <p>Simpan key di file <code>.env</code> server Anda dan pastikan nama file tersebut telah dimasukkan ke dalam <code>.gitignore</code>.</p>
+              </div>
+              <div className="developer-info-card">
+                <h4>3. Rotasi Kunci Instan</h4>
+                <p>Segera lakukan rotasi kunci melalui API Console bila Anda menduga kunci pernah terekspos pada log atau commit publik.</p>
+              </div>
+              <div className="developer-info-card">
+                <h4>4. Pantau Grafik Pemakaian</h4>
+                <p>Cek halaman API Console secara berkala untuk memantau lonjakan konsumsi token yang tidak wajar.</p>
+              </div>
+            </div>
+          )
+        }
+      ]
+    }
+  };
+
+  const current = docsData[docId] || docsData["api-key"];
+
+  return (
+    <article className="developer-article developer-dynamic">
+      <div className="developer-breadcrumb">
+        DOKUMENTASI <span>›</span> {current.category} <span>›</span> {current.title.toUpperCase()}
+      </div>
+
+      <h1>{current.title}</h1>
+      <p className="developer-lead">{current.lead}</p>
+
+      {current.callout && (
+        <section className="developer-callout">
+          <strong>{current.callout.title}</strong>
+          <p>{current.callout.body}</p>
+        </section>
+      )}
+
+      {current.sections && current.sections.map((sec, idx) => (
+        <section key={idx} className="developer-doc-section-block">
+          <h2>{sec.title}</h2>
+          {sec.content}
+        </section>
+      ))}
+    </article>
+  );
+}
+
+function ApiConsole({ user, userProfile }) {
+  const usage = userProfile?.agentsUsage || {};
+  const used = Number(usage.dailyTokens || usage.monthTokens || 0);
+  useEffect(() => {
+    if (!user?.uid) return;
+    const target = `/api-key/uid=${encodeURIComponent(user.uid)}`;
+    if (window.location.pathname !== target) window.history.replaceState({ page: "api-console", uid: user.uid }, "", target);
+  }, [user?.uid]);
+  return <main className="developer-page"><section className="api-console"><header><div><span>CONSOLE</span><h1>API key</h1><p>{user.email || "Akun pengguna"}</p></div><a href="/?page=home">Kembali ke beranda</a></header><section><h2>Akses API</h2><p>API key publik belum diaktifkan pada backend. Tidak ada key provider internal yang ditampilkan atau dapat disalin dari halaman ini.</p></section><section><h2>Token Agents</h2><strong>{used.toLocaleString("id-ID")} token terpakai</strong><p>Pemakaian API akan memakai kuota Agents dari akun ini setelah endpoint publik dan validasi key server-side tersedia.</p></section></section></main>;
+}
+
+function DeveloperPage({ page, onNavigate, user, onOpenAuth }) {
+  const [docsNavOpen, setDocsNavOpen] = useState(false);
+  const [docId, setDocId] = useState("api-key");
+  const [searchQuery, setSearchQuery] = useState("");
+  const isDocs = page === "api-docs";
+
+  const navCategories = [
+    {
+      group: "KREDENSIAL & AKSES",
+      items: [
+        { id: "api-key", label: "Dapatkan API Key", badge: "KEY" },
+        { id: "auth", label: "Autentikasi & Header", badge: "AUTH" },
+        { id: "tokens", label: "Sistem Kuota & Token", badge: "LIMIT" }
+      ]
+    },
+    {
+      group: "ENDPOINT API",
+      items: [
+        { id: "chat", label: "Chat Completions", badge: "POST" },
+        { id: "models", label: "Katalog Model AI", badge: "GET" },
+        { id: "tts", label: "Voice & Text to Speech", badge: "POST" }
+      ]
+    },
+    {
+      group: "INTEGRASI & SDK",
+      items: [
+        { id: "quickstart", label: "Quickstart & cURL", badge: "CURL" },
+        { id: "javascript", label: "JavaScript / Node.js", badge: "JS" },
+        { id: "python", label: "Python SDK", badge: "PY" }
+      ]
+    },
+    {
+      group: "REFERENSI SISTEM",
+      items: [
+        { id: "errors", label: "Kode Status & Error", badge: "HTTP" },
+        { id: "security", label: "Praktik Keamanan", badge: "SEC" }
+      ]
+    }
+  ];
+
+  const openDoc = (nextDoc) => {
+    setDocId(nextDoc);
+    if (typeof onNavigate === "function") onNavigate("api-docs");
+    setDocsNavOpen(false);
+  };
+
+  const filteredCategories = navCategories.map((cat) => ({
+    ...cat,
+    items: cat.items.filter((item) =>
+      item.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      item.badge.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      cat.group.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+  })).filter((cat) => cat.items.length > 0);
+
+  const SideNav = () => (
+    <aside className={`developer-doc-nav ${docsNavOpen ? "mobile-open" : ""}`}>
+      <label className="developer-search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+          <circle cx="10.5" cy="10.5" r="5.8" />
+          <path d="m15 15 4.5 4.5" />
+        </svg>
+        <input
+          placeholder="Cari dokumentasi..."
+          aria-label="Cari dokumentasi"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+        {searchQuery ? (
+          <button
+            type="button"
+            onClick={() => setSearchQuery("")}
+            style={{ border: 0, background: "transparent", color: "var(--text-faint)", cursor: "pointer", padding: 0 }}
+          >
+            ✕
+          </button>
+        ) : (
+          <kbd>Ctrl K</kbd>
+        )}
+      </label>
+
+      {filteredCategories.map((cat, catIdx) => (
+        <div key={catIdx} className="developer-nav-group-block">
+          <span>{cat.group}</span>
+          {cat.items.map((item) => (
+            <button
+              key={item.id}
+              className={docId === item.id && isDocs ? "active" : ""}
+              onClick={() => openDoc(item.id)}
+            >
+              <span>{item.label}</span>
+              {item.badge && <span className="developer-doc-nav-badge">{item.badge}</span>}
+            </button>
+          ))}
+        </div>
+      ))}
+
+      <span>API CONSOLE</span>
+      <button
+        type="button"
+        onClick={() => {
+          if (typeof onNavigate === "function") onNavigate("api-console");
+          else window.location.href = "/api-key";
+          setDocsNavOpen(false);
+        }}
+        style={{ color: "var(--accent-bright)", fontWeight: 600 }}
+      >
+        <span>Buka API Key Console</span>
+        <span className="developer-doc-nav-badge">↗</span>
+      </button>
+    </aside>
+  );
+
+  return (
+    <main className="developer-page">
+      <header className="developer-topbar">
+        <button className="developer-mobile-menu" onClick={() => setDocsNavOpen((open) => !open)} aria-label="Buka navigasi dokumentasi">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M4 7h16M4 12h16M4 17h16" />
+          </svg>
+        </button>
+
+        <button className="developer-wordmark" onClick={() => (typeof onNavigate === "function" ? onNavigate("api-docs") : null)}>
+          <img src={brandLogo} alt="" />
+          <span>
+            <b>M Putra Ramadhani</b>
+            <small>AI INDONESIA</small>
+          </span>
+        </button>
+
+        <nav>
+          <button className={docId === "chat" ? "active" : ""} onClick={() => openDoc("chat")}>Chat AI API</button>
+          <button className={docId === "models" ? "active" : ""} onClick={() => openDoc("models")}>Model AI</button>
+          <button className={docId === "tts" ? "active" : ""} onClick={() => openDoc("tts")}>Voice & TTS</button>
+          <button className={docId === "quickstart" ? "active" : ""} onClick={() => openDoc("quickstart")}>Quickstart</button>
+          <button className={docId === "tokens" ? "active" : ""} onClick={() => openDoc("tokens")}>Kuota Token</button>
+        </nav>
+
+        <div className="developer-topbar-actions">
+          <button onClick={() => (typeof onNavigate === "function" ? onNavigate("api-console") : (window.location.href = "/api-key"))}>
+            API Key Console
+          </button>
+          {user ? (
+            <button className="developer-console-btn" onClick={() => (typeof onNavigate === "function" ? onNavigate("home") : (window.location.href = "/?page=home"))}>
+              Kembali ke Chat
+            </button>
+          ) : (
+            <button className="developer-console-btn" onClick={() => (typeof onOpenAuth === "function" ? onOpenAuth() : (window.location.href = "/?page=home"))}>
+              Masuk / Login
+            </button>
+          )}
+        </div>
+      </header>
+
+      {docsNavOpen && <button className="developer-mobile-backdrop" onClick={() => setDocsNavOpen(false)} aria-label="Tutup navigasi" />}
+
+      <section className="developer-shell">
+        <div className="developer-layout">
+          <SideNav />
+          <DeveloperDocArticle docId={docId} onNavigate={onNavigate} />
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function Sidebar({ chats, activeId, onOpen, onNew, onDelete, user, isOpen, onToggle, onPage, userPlan = "free", t, onVoiceMode, onAgentsMode, currentPage }) {
   const tr = t || getTranslation("id");
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
   const filteredChats = chats.filter((chat) => !searchOpen || (chat.title || "").toLowerCase().includes(search.toLowerCase()));
   const [menuOpen, setMenuOpen] = useState(false);
   const name = user.displayName || user.email;
+  const historyListStyle = { flex: "1 1 auto", minHeight: 0, width: "100%", overflowY: "auto", overflowX: "hidden", display: "flex", flexDirection: "column", gap: "3px", padding: "0 2px 0 0", boxSizing: "border-box" };
+  const historyLabelStyle = { margin: "17px 7px 8px", color: "var(--text-faint)", fontSize: "10px", letterSpacing: ".08em", textTransform: "uppercase", fontWeight: 700 };
 
   return (
     <>
@@ -1233,34 +2619,54 @@ function Sidebar({ chats, activeId, onOpen, onNew, onDelete, user, isOpen, onTog
           </div>
           <div className="sidebar-tools">
             <button aria-label={tr.searchTooltip} onClick={() => setSearchOpen((open) => !open)}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
             </button>
             <button onClick={onToggle} aria-label={tr.closeSidebar}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9 4v16" /></svg>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="4" /><path d="M9 3v18" /></svg>
             </button>
           </div>
         </div>
 
-        <button className="sidebar-new" onClick={onNew} title={tr.sidebarNew} aria-label={tr.sidebarNew}>
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
+        <button className={`sidebar-new ${currentPage === "home" || currentPage === "chat" ? "active" : ""}`} onClick={onNew} title={tr.sidebarNew} aria-label={tr.sidebarNew}>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 5v14M5 12h14" />
           </svg>
           <span className="sidebar-new-label">{tr.sidebarNew}</span>
         </button>
 
-        <button className="sidebar-voice" onClick={onVoiceMode} title={tr.voiceModeTitle} aria-label={tr.voiceModeLabel}>
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <line x1="4" y1="10" x2="4" y2="14" />
-            <line x1="8.5" y1="7" x2="8.5" y2="17" />
-            <line x1="13" y1="4" x2="13" y2="20" />
-            <line x1="17.5" y1="7" x2="17.5" y2="17" />
-            <line x1="21" y1="10" x2="21" y2="14" />
+        <button className={`sidebar-voice ${currentPage === "voice" ? "active" : ""}`} onClick={onVoiceMode} title={tr.voiceModeTitle} aria-label={tr.voiceModeLabel}>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+            <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
+            <line x1="12" y1="18" x2="12" y2="22" />
+            <line x1="8" y1="22" x2="16" y2="22" />
           </svg>
           <span className="sidebar-new-label">{tr.voiceModeLabel}</span>
         </button>
 
-        <div className="history-label">{tr.chatHistory}</div>
+        <button
+          className={`sidebar-agents ${currentPage === "agents" ? "active" : ""}`}
+          onClick={onAgentsMode}
+          title={tr.agentsModeTitle || "AI Agents Akademik: Riset & Karya Ilmiah"}
+          aria-label={tr.agentsModeLabel || "Agents Akademik"}
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M22 10v6M2 10l10-5 10 5-10 5z" />
+            <path d="M6 12v5c0 1.66 2.69 3 6 3s6-1.34 6-3v-5" />
+          </svg>
+          <span className="sidebar-new-label">{tr.agentsModeLabel || "Agents Akademik"}</span>
+        </button>
+
+        <button className="sidebar-agents" onClick={() => onPage("api-docs")} title="Docs API" aria-label="Docs API">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z" /><path d="m8.5 7.5 2.5 2.5-2.5 2.5M13.5 12.5h2" /></svg>
+          <span className="sidebar-new-label">Docs API</span>
+        </button>
+        <button className="sidebar-agents" onClick={() => onPage("api-keys")} title="API Key" aria-label="API Key">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="7.5" cy="15.5" r="4.5" /><path d="m10.7 12.3 8.8-8.8a1.2 1.2 0 0 1 1.7 0l1.1 1.1a1.2 1.2 0 0 1 0 1.7l-1.8 1.8-1.5-1.5-2 2 1.5 1.5-2 2" /></svg>
+          <span className="sidebar-new-label">API Key</span>
+        </button>
+
+        <div className="history-label" style={historyLabelStyle}>{tr.chatHistory}</div>
 
         {searchOpen && (
           <div className="sidebar-search-wrap">
@@ -1275,14 +2681,16 @@ function Sidebar({ chats, activeId, onOpen, onNew, onDelete, user, isOpen, onTog
           </div>
         )}
 
-        <div className="history-list">
+        <div className="history-list" style={historyListStyle}>
           {filteredChats.length ? (
             filteredChats.map((chat) => (
-              <div className={`history-item ${chat.id === activeId ? "active" : ""}`} key={chat.id}>
-                <button className="history-open" onClick={() => onOpen(chat)}>
+              <div className={`history-item ${chat.id === activeId ? "active" : ""}`} key={chat.id} style={{ display: "flex", alignItems: "center", minWidth: 0, minHeight: "36px", borderRadius: "7px", background: chat.id === activeId ? "var(--accent-soft)" : "transparent" }}>
+                <button type="button" className="history-open" onClick={() => onOpen(chat)} style={{ flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "8px 9px", border: 0, borderRadius: "7px", background: "transparent", color: "var(--text-dim)", textAlign: "left", font: "inherit", fontSize: "12px", cursor: "pointer" }}>
                   {chat.title || tr.newConversation}
                 </button>
-                <button className="history-delete" title={tr.deleteChat} onClick={() => onDelete(chat.id)}>×</button>
+                <button type="button" className="history-delete" title={tr.deleteChat} onClick={() => onDelete(chat.id)} style={{ flex: "0 0 25px", width: "25px", height: "25px", padding: 0, border: 0, borderRadius: "5px", background: "transparent", color: "var(--text-faint)", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                </button>
               </div>
             ))
           ) : (
@@ -1293,10 +2701,22 @@ function Sidebar({ chats, activeId, onOpen, onNew, onDelete, user, isOpen, onTog
         <div className="account-wrap">
           {menuOpen && (
             <div className="account-menu">
-              <button onClick={() => { onPage("settings"); setMenuOpen(false); }}>{tr.settingsMenu}</button>
-              <button onClick={() => { onPage("upgrade"); setMenuOpen(false); }}>{tr.upgradeMenu}</button>
-              <button onClick={() => { onPage("vouchers"); setMenuOpen(false); }}>{tr.voucherMenu || "Voucher"}</button>
-              <button className="logout" onClick={() => { updateChatUrl(null, null, true); signOut(auth); }}>{tr.logoutMenu}</button>
+              <button onClick={() => { onPage("settings"); setMenuOpen(false); }}>
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
+                <span>{tr.settingsMenu}</span>
+              </button>
+              <button onClick={() => { onPage("upgrade"); setMenuOpen(false); }}>
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 19h20M2 7l5 5 5-7 5 7 5-5v10H2z" /></svg>
+                <span>{tr.upgradeMenu}</span>
+              </button>
+              <button onClick={() => { onPage("vouchers"); setMenuOpen(false); }}>
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 9a3 3 0 0 1 0 6v4a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-4a3 3 0 0 1 0-6V5a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v4z" /><path d="M12 3v18" strokeDasharray="3 3" /></svg>
+                <span>{tr.voucherMenu || "Voucher"}</span>
+              </button>
+              <button className="logout" onClick={() => { updateChatUrl(null, null, true); signOut(auth); }}>
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" /></svg>
+                <span>{tr.logoutMenu}</span>
+              </button>
             </div>
           )}
           <button className="account-btn" onClick={() => setMenuOpen(!menuOpen)}>
@@ -1576,7 +2996,9 @@ function VoiceMode({
           audioRef.current.pause();
           audioRef.current.currentTime = 0;
         } catch (e) {
-          console.warn("Audio element unlock:", e);
+          // pause()/ganti suara dapat membatalkan play() yang sangat singkat
+          // saat unlock. Ini normal, bukan kegagalan pemutaran pengguna.
+          if (e?.name !== "AbortError") console.warn("Audio element unlock:", e);
         }
       }
       // 2. Bangunkan Web Audio Context
@@ -1719,22 +3141,45 @@ function VoiceMode({
 
     const curGender = voiceGenderRef.current;
 
-    // 1. Coba ElevenLabs Text-to-Speech via endpoint backend /api/tts (dengan rotasi multi-key & fallback streaming)
+    // 1. Utamakan clone suara melalui Cloudflare Tunnel milik pemilik.
+    // Jika laptop/server offline, alur lanjut otomatis ke ElevenLabs.
     try {
-      const resp = await fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text: clean,
-          gender: curGender,
-          lang: lang || "id",
-          modelId: clean.length > 1000 ? "eleven_multilingual_v2" : "eleven_flash_v2_5",
-        }),
-      });
+      let localResponse = null;
+      if (curGender === "female" || curGender === "male") {
+        try {
+          const voiceRequest = new Request(`${VOICE_CLONE_API_URL}/tts`, {
+            method: "POST",
+            // Chatterbox dapat memerlukan beberapa menit, terutama saat GPU
+            // sedang menangani permintaan lain. Jangan berpindah ke ElevenLabs
+            // hanya karena inferensi lokal melewati 20 detik.
+            signal: AbortSignal.timeout(300000),
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: clean, gender: curGender, language: lang === "en" ? "en" : "id" }),
+          });
+          localResponse = await fetch(voiceRequest);
+          if (!localResponse.ok) localResponse = null;
+        } catch {
+          localResponse = null;
+        }
+      }
+
+      let resp = localResponse;
+      if (!resp) {
+        resp = await fetch("/api/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: clean,
+            gender: curGender,
+            lang: lang || "id",
+            modelId: clean.length > 1000 ? "eleven_multilingual_v2" : "eleven_flash_v2_5",
+          }),
+        });
+      }
 
       if (resp.ok) {
         const arrayBuf = await resp.arrayBuffer();
-        const blob = new Blob([arrayBuf], { type: "audio/mpeg" });
+        const blob = new Blob([arrayBuf], { type: resp.headers.get("content-type") || "audio/mpeg" });
         const url = URL.createObjectURL(blob);
         activeBlobUrlRef.current = url;
 
@@ -1755,7 +3200,7 @@ function VoiceMode({
             sound.src = url;
             sound.muted = false;
             sound.volume = 1.0;
-            // Aktifkan animasi "Sedang berbicara" HANYA ketika suara ElevenLabs benar-benar berbunyi
+        // Aktifkan animasi hanya ketika suara dari clone lokal atau TTS cadangan benar-benar berbunyi.
             sound.onplay = markSpeaking;
             sound.onended = () => {
               URL.revokeObjectURL(url);
@@ -1942,12 +3387,8 @@ function VoiceMode({
 
   return (
     <div className="voice-page">
-      <div className="voice-top">
-        <div className="voice-top-left">
-          <span className="voice-top-title">
-            {voiceGender === "female" ? (tr.voiceModeFemaleHeader || tr.voiceModeFemaleLabel || "Suara Putri") : (tr.voiceModeMaleHeader || "Suara Putra")}
-          </span>
-        </div>
+      <div className="topbar visible voice-top">
+        <div />
         <div className="voice-top-actions">
           <div className="voice-gender-toggle" role="group" aria-label="Filter Suara">
             <button
@@ -1969,22 +3410,6 @@ function VoiceMode({
               <span>♀</span> {tr.voiceFemale || "Perempuan"}
             </button>
           </div>
-          <button
-            type="button"
-            className="voice-icon-btn"
-            onClick={() => {
-              stopAudio();
-              stopVoiceCapture();
-              onExit();
-            }}
-            title={tr.voiceExit}
-            aria-label={tr.voiceExit}
-          >
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-              <line x1="6" y1="6" x2="18" y2="18" />
-              <line x1="18" y1="6" x2="6" y2="18" />
-            </svg>
-          </button>
         </div>
       </div>
 
@@ -2113,10 +3538,26 @@ function VoiceMode({
         playsInline
         webkit-playsinline="true"
         x-webkit-airplay="allow"
-        preload="auto"
         style={{ position: "fixed", top: -9999, left: -9999, opacity: 0, pointerEvents: "none" }}
       />
     </div>
+  );
+}
+
+function AgentsMode({ t, lang, user, userProfile, userPlan, selectedModel, onSelectModel, onUpgrade, onUpdateAgentsUsage }) {
+  return (
+    <SkripsiAgentDashboard
+      ComposerComponent={Composer}
+      t={t}
+      lang={lang}
+      user={user}
+      userProfile={userProfile}
+      userPlan={userPlan}
+      selectedModel={selectedModel}
+      onSelectModel={onSelectModel}
+      onUpgrade={onUpgrade}
+      onUpdateAgentsUsage={onUpdateAgentsUsage}
+    />
   );
 }
 
@@ -2197,6 +3638,17 @@ function AccountPage({
   const [voucherInput, setVoucherInput] = useState("");
   const [selectedVoucherId, setSelectedVoucherId] = useState("");
   const [voucherMessage, setVoucherMessage] = useState("");
+
+  const { todayKey, monthKey: currentMonthKey } = getJakartaUsagePeriod();
+  const agentsUsageData = userProfile?.agentsUsage || {};
+
+  const isAgentsPlus = userPlan === "plus";
+  const agentsTokenLimit = isAgentsPlus ? 120000 : 7000;
+  const agentsUsedTokens = isAgentsPlus
+    ? (agentsUsageData.date === todayKey ? Number(agentsUsageData.dailyTokens || 0) : 0)
+    : (agentsUsageData.month === currentMonthKey ? Number(agentsUsageData.monthTokens || 0) : 0);
+  const agentsRemainingTokens = Math.max(0, agentsTokenLimit - agentsUsedTokens);
+  const agentsUsagePercent = Math.min(100, Math.round((agentsUsedTokens / agentsTokenLimit) * 100));
 
   const claimedVoucherList = Object.values(claimedVouchers || {}).filter((voucher) => voucher?.status !== "used");
   const selectedVoucher = claimedVoucherList.find((voucher) => voucher.id === selectedVoucherId)
@@ -2427,6 +3879,66 @@ function AccountPage({
               </div>
             </div>
 
+            {/* Pemakaian AI Agents Akademik */}
+            <div className="profile-row">
+              <span className="profile-label">
+                {lang === "id" ? "Pemakaian AI Agents Akademik" : "AI Academic Agents Usage"}
+              </span>
+              <div className="profile-agents-usage-card">
+                <div className="agents-usage-card-top">
+                  <div className="agents-usage-header-left">
+                    <div className="agents-usage-title-wrap">
+                      <span className="agents-usage-title">
+                        {lang === "id" ? "Kuota Token Agents" : "Agents Token Quota"}
+                      </span>
+                    </div>
+                    <p className="agents-usage-reset-text">
+                      {isAgentsPlus
+                        ? (lang === "id" ? "Otomatis di-reset setiap hari pukul 00:00 WIB" : "Resets daily at 00:00 WIB")
+                        : (lang === "id" ? "Otomatis di-reset setiap awal bulan" : "Resets on the first day of every month")}
+                    </p>
+                  </div>
+                  {!isAgentsPlus && (
+                    <button
+                      type="button"
+                      className="profile-sub-action"
+                      onClick={() => onNavigate?.("upgrade")}
+                    >
+                      {lang === "id" ? "Dapatkan 120rb/hari →" : "Get 120k/day →"}
+                    </button>
+                  )}
+                </div>
+
+                <div className="agents-usage-progress-container">
+                  <div className="agents-usage-progress-track">
+                    <div
+                      className={`agents-usage-progress-fill ${agentsUsagePercent >= 90 ? "danger" : agentsUsagePercent >= 70 ? "warning" : ""}`}
+                      style={{ width: `${agentsUsagePercent}%` }}
+                    />
+                  </div>
+                  <div className="agents-usage-progress-meta">
+                    <span>{agentsUsagePercent}% {lang === "id" ? "terpakai" : "used"}</span>
+                    <span>{agentsRemainingTokens.toLocaleString("id-ID")} {lang === "id" ? "token tersisa" : "tokens remaining"}</span>
+                  </div>
+                </div>
+
+                <div className="agents-usage-stats-grid">
+                  <div className="agents-usage-stat-item">
+                    <span className="agents-usage-stat-label">{lang === "id" ? "Terpakai Periode Ini" : "Used This Period"}</span>
+                    <strong className="agents-usage-stat-val">{agentsUsedTokens.toLocaleString("id-ID")} <small>token</small></strong>
+                  </div>
+                  <div className="agents-usage-stat-item">
+                    <span className="agents-usage-stat-label">{lang === "id" ? "Batas Kuota" : "Token Limit"}</span>
+                    <strong className="agents-usage-stat-val">{agentsTokenLimit.toLocaleString("id-ID")} <small>token</small></strong>
+                  </div>
+                  <div className="agents-usage-stat-item">
+                    <span className="agents-usage-stat-label">{lang === "id" ? "Total Akumulasi" : "All-time Total"}</span>
+                    <strong className="agents-usage-stat-val">{(Number(agentsUsageData?.totalTokens || 0)).toLocaleString("id-ID")} <small>token</small></strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div className="profile-row">
               <span className="profile-label">{tr.purchaseHistoryTitle || "Riwayat Pembelian dan Upgrade"}</span>
               <div className="purchase-history-list">
@@ -2442,7 +3954,7 @@ function AccountPage({
                       <span>{tr.purchasePrice || "Harga"}: {entry.amount > 0 ? rupiah(entry.amount) : (entry.type === "admin" ? (tr.purchaseAdminLabel || "Admin") : (tr.purchasePriceUnknown || "Tidak tercatat"))}</span>
                       <span>{tr.purchaseDate || "Tanggal"}: {formatDate(entry.date)}</span>
                     </div>
-                    <code className="purchase-history-id">{tr.purchaseId || "ID Pembayaran / Admin"}: {entry.type === "admin" ? (entry.adminId || entry.id) : (entry.paymentId || entry.orderId || entry.id || "-")}</code>
+                    <code className="purchase-history-id">{tr.purchaseId || "ID Pembayaran"}: {entry.type === "admin" ? (entry.adminId || entry.id) : (entry.paymentId || entry.orderId || entry.id || "-")}</code>
                   </div>
                 ))}
               </div>
@@ -2774,6 +4286,10 @@ function App() {
   }, [lang, t]);
 
   const [userProfile, setUserProfile] = useState(null);
+  const userProfileRef = useRef(null);
+  useEffect(() => {
+    userProfileRef.current = userProfile;
+  }, [userProfile]);
   const [profileReady, setProfileReady] = useState(false);
   const [userPlan, setUserPlan] = useState(() => {
     try {
@@ -3085,12 +4601,17 @@ function App() {
     const plan = (typeof localStorage !== "undefined" && localStorage.getItem("val_ai_user_plan")) || "free";
     if (plan === "free") {
       const active = findModel(saved);
-      if (active.tier !== "free") return "openrouter/free";
+      if (active.tier !== "free") return "mputra/v61-mini";
     }
     return saved;
   });
-  const [page, setPage] = useState(() => getChatParamsFromUrl().page || "chat");
+  const [page, setPage] = useState(() => {
+    const urlPage = getChatParamsFromUrl().page;
+    // Jika tidak ada page parameter atau page adalah "chat", gunakan "home"
+    return urlPage && urlPage !== "chat" ? urlPage : "home";
+  });
   const [securityToast, setSecurityToast] = useState("");
+  const [showAuthModal, setShowAuthModal] = useState(false);
   const bottom = useRef(null);
   // Do not leave the landing screen until at least one message has rendered.
   const inChat = messages.length > 0;
@@ -3114,7 +4635,7 @@ function App() {
     const { uid: urlUid, chatId: urlChatId, page: urlPage } = getChatParamsFromUrl();
 
     // Jika URL mengarah ke halaman yang berdiri sendiri, pertahankan halamannya saat refresh.
-    if (urlPage === "upgrade" || urlPage === "settings" || urlPage === "voice" || urlPage === "vouchers") {
+    if (urlPage === "upgrade" || urlPage === "settings" || urlPage === "voice" || urlPage === "vouchers" || urlPage === "agents" || urlPage === "api-docs" || urlPage === "api-keys") {
       setPage(urlPage);
       if (user) {
         if (urlUid && urlUid !== user.uid) {
@@ -3184,7 +4705,7 @@ function App() {
   useEffect(() => {
     const handlePopState = () => {
       const { uid: urlUid, chatId: urlChatId, page: urlPage } = getChatParamsFromUrl();
-      if (urlPage === "upgrade" || urlPage === "settings" || urlPage === "voice" || urlPage === "vouchers") {
+      if (urlPage === "upgrade" || urlPage === "settings" || urlPage === "voice" || urlPage === "vouchers" || urlPage === "agents" || urlPage === "api-docs" || urlPage === "api-keys") {
         setPage(urlPage);
         if (urlPage === "voice") setConversationId(urlChatId);
         return;
@@ -3230,8 +4751,8 @@ function App() {
     if (userPlan === "free") {
       const active = findModel(selectedModel);
       if (active.tier !== "free") {
-        setSelectedModel("openrouter/free");
-        saveModel("openrouter/free");
+        setSelectedModel("mputra/v61-mini");
+        saveModel("mputra/v61-mini");
       }
     }
   }, [userPlan, selectedModel]);
@@ -3257,7 +4778,7 @@ function App() {
   const remainingVoiceCount = userPlan === "plus" ? Infinity : Math.max(0, FREE_VOICE_LIMIT - currentVoiceCount);
   const todayKey = new Date().toLocaleDateString("en-CA");
   const uploadUsage = userProfile?.attachmentUsage || {};
-  const freeAttachmentRemaining = userPlan === "plus" ? Infinity : Math.max(0, 3 - (uploadUsage.date === todayKey ? Number(uploadUsage.count || 0) : 0));
+  const freeAttachmentRemaining = userPlan === "plus" ? Infinity : Math.max(0, 10 - (uploadUsage.date === todayKey ? Number(uploadUsage.count || 0) : 0));
   const userMessageCount = messages.filter((m) => m.role === "user").length;
   const totalUsageCount = userMessageCount + (regenCount || 0);
   const isLimitReached = userPlan === "free" && totalUsageCount >= FREE_CHAT_LIMIT;
@@ -3337,10 +4858,13 @@ function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: selectedModel,
-          messages: [{ role: "system", content: SYSTEM_PROMPT + SAFETY_RULES + (isVoice ? VOICE_SYSTEM_INSTRUCTION : "") }, ...apiMessages],
-          temperature: CONFIG.temperature,
-          max_tokens: CONFIG.maxTokens,
+          model: isVoice ? VOICE_CHAT_MODEL : selectedModel,
+          messages: [{ role: "system", content: SYSTEM_PROMPT + SAFETY_RULES + (userPlan === "plus" ? "\n\nPaket Plus aktif: berikan penalaran yang lebih teliti, jawaban lebih lengkap bila diperlukan, dan pertahankan konteks percakapan." : "\n\nPaket Free: jawab langsung, akurat, dan ringkas tanpa mengurangi poin penting.") + (isVoice ? VOICE_SYSTEM_INSTRUCTION : "") }, ...apiMessages],
+          temperature: isVoice ? 0.72 : (userPlan === "plus" ? 0.65 : CONFIG.temperature),
+          // Mode suara dipakai untuk dialog cepat; jawaban panjang membuat
+          // proses sintesis Chatterbox jauh lebih lama.
+          max_tokens: isVoice ? 250 : (userPlan === "plus" ? 4096 : CONFIG.maxTokens),
+          plan: userPlan,
           stream: true
         })
       });
@@ -3353,10 +4877,18 @@ function App() {
         if (!data || data === "[DONE]") return;
         const chunk = JSON.parse(data);
         if (chunk.error) throw new Error(chunk.error.message || "Respons AI gagal. Silakan coba lagi.");
-        const delta = chunk.choices?.[0]?.delta?.content;
-        // Metadata, reasoning and whitespace must not replace the typing indicator.
-        if (typeof delta !== "string" || !delta) return;
-        full += delta;
+        let contentPart = chunk.choices?.[0]?.delta?.content ??
+          chunk.choices?.[0]?.message?.content ??
+          chunk.choices?.[0]?.text ??
+          chunk.content ??
+          chunk.text;
+        // Penyedia kompatibel OpenAI kadang mengirimkan beberapa bagian konten sebagai array.
+        if (Array.isArray(contentPart)) {
+          contentPart = contentPart.map((part) => part?.text || part?.content || "").join("");
+        }
+        // Metadata, reasoning, dan whitespace tidak boleh dianggap sebagai jawaban.
+        if (typeof contentPart !== "string" || !contentPart) return;
+        full += contentPart;
         // Keep the indicator visible until the complete response is screened.
         // This prevents a partial identity/model disclosure from flashing on screen.
       };
@@ -3370,9 +4902,7 @@ function App() {
       }
       if (buffer.trim()) consumeLine(buffer);
       full = cleanResponse(full).trim();
-      if (!full) {
-        full = t.defaultAiGreeting || "Halo! Saya M Putra Ramadhani - Ai Indonesia. Senang bisa terhubung dengan Anda! Ada yang bisa saya bantu atau diskusikan bersama hari ini?";
-      }
+      if (!full) throw new Error("AI belum dapat menghasilkan jawaban setelah mencoba jalur cadangan. Silakan coba lagi beberapa saat.");
 
       if (targetIndex !== null && typeof targetIndex === "number") {
         setMessages((current) => {
@@ -3489,10 +5019,10 @@ function App() {
     }
   };
 
-  // Suara Putra: mode obrolan suara memakai model yang sudah ada (Plus: V6.1 Chat, Free: model Free)
+  // Mode suara selalu memakai model cepat khusus percakapan.
   const openVoiceMode = () => {
     if (streaming) return;
-    const voiceModel = userPlan === "plus" ? "mputra/v61-peduli" : "openrouter/free";
+    const voiceModel = VOICE_CHAT_MODEL;
     setSelectedModel(voiceModel);
     saveModel(voiceModel);
     const freshId = user ? push(ref(db, `users/${user.uid}/conversations`)).key : null;
@@ -3500,6 +5030,48 @@ function App() {
     setMessages([]);
     setRegenCount(0);
     navigateToPage("voice");
+  };
+
+  const openAgentsMode = () => {
+    if (streaming) return;
+    setSidebarOpen(false);
+    navigateToPage("agents");
+  };
+
+  const handleUpdateAgentsUsage = async (tokensConsumed) => {
+    if (!user || !tokensConsumed || tokensConsumed <= 0) return;
+    const { todayKey, monthKey: currentMonthKey } = getJakartaUsagePeriod();
+
+    const prevProfile = userProfileRef.current || userProfile || {};
+    const prevUsage = prevProfile.agentsUsage || {};
+    const currentMonthTokens = prevUsage.month === currentMonthKey ? Number(prevUsage.monthTokens || 0) : 0;
+    const currentDailyTokens = prevUsage.date === todayKey ? Number(prevUsage.dailyTokens || 0) : 0;
+    const totalTokens = Number(prevUsage.totalTokens || 0) + tokensConsumed;
+
+    const nextAgentsUsage = {
+      month: currentMonthKey,
+      monthTokens: currentMonthTokens + tokensConsumed,
+      date: todayKey,
+      dailyTokens: currentDailyTokens + tokensConsumed,
+      totalTokens: totalTokens,
+      updatedAt: Date.now(),
+    };
+
+    // Update ref secara sinkron seketika agar pemanggilan berikutnya tidak menimpa kuota
+    userProfileRef.current = {
+      ...prevProfile,
+      agentsUsage: nextAgentsUsage,
+    };
+
+    setUserProfile((current) => ({ ...(current || {}), agentsUsage: nextAgentsUsage }));
+    try {
+      await update(ref(db, `users/${user.uid}/profile`), {
+        agentsUsage: nextAgentsUsage,
+        updatedAt: Date.now(),
+      });
+    } catch (err) {
+      console.warn("Gagal mencatat pemakaian agents ke database:", err);
+    }
   };
   const sendVoiceMessage = async (history) => {
     if (!user || streaming) return null;
@@ -3523,12 +5095,7 @@ function App() {
     setMessages(history);
     updateChatUrl(user.uid, chatId);
     persistChat(chatId, history, regenCount);
-    // Model gratis kadang kena rate limit sesaat: coba maksimal dua kali
     let reply = await request(history, chatId, regenCount, true);
-    if (!reply) {
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-      reply = await request(history, chatId, regenCount, true);
-    }
     if (!reply) console.warn("Suara Putra: tidak mendapat jawaban setelah dua percobaan.");
 
     // Filter cadangan jika respons AI tetap memuat blok kode pemrograman
@@ -3549,14 +5116,23 @@ function App() {
 
     return reply || null;
   };
+  const handleNewChat = () => {
+    if (page === "agents") {
+      window.dispatchEvent(new CustomEvent("val_ai_reset_agents"));
+      setSidebarOpen(false);
+      return;
+    }
+    reset();
+  };
   const reset = () => {
     if (!streaming) {
       setMessages([]);
       setConversationId(null);
       setRegenCount(0);
       setSidebarOpen(false);
-      setPage("chat");
-      updateChatUrl(user ? user.uid : null, null, "chat");
+      setPage("home");
+      // Pastikan URL diperbarui ke halaman home tanpa chatId
+      updateChatUrl(user ? user.uid : null, null, "home", false);
     }
   };
   const openChat = (chat) => {
@@ -3573,6 +5149,7 @@ function App() {
 
   // Blokir total jika status akun adalah "banned" (dilarang keras menggunakan website ini)
   const isUserBanned = Boolean(user && userProfile && userProfile.status === "banned");
+  const isDeveloperPage = page === "api-docs" || page === "api-keys" || page === "api-console";
   if (authReady && user && isUserBanned) {
     return (
       <BannedScreen
@@ -3586,13 +5163,24 @@ function App() {
     );
   }
 
-  return <div className={`app app-shell ${user && sidebarOpen ? "drawer-open" : ""}`}>
-    {authReady && !user && <AuthModal t={t} />}
-    {user && <Sidebar chats={chats} activeId={conversationId} onOpen={openChat} onNew={reset} onDelete={removeChat} user={user} isOpen={sidebarOpen} onToggle={() => setSidebarOpen((open) => !open)} onPage={navigateToPage} userPlan={userPlan} onVoiceMode={openVoiceMode} t={t} />}
-    {user && sidebarOpen && <button className="sidebar-backdrop" aria-label={t.closeSidebar} onClick={() => setSidebarOpen(false)} />}
+  return <div className={`app app-shell ${user && sidebarOpen && !isDeveloperPage ? "drawer-open" : ""}`}>
+    {((authReady && !user && (!isDeveloperPage || page === "api-console")) || (showAuthModal && !user)) && (
+      <AuthModal t={t} onClose={() => setShowAuthModal(false)} />
+    )}
+    {user && !isDeveloperPage && <Sidebar chats={chats} activeId={conversationId} onOpen={openChat} onNew={handleNewChat} onDelete={removeChat} user={user} isOpen={sidebarOpen} onToggle={() => setSidebarOpen((open) => !open)} onPage={navigateToPage} userPlan={userPlan} onVoiceMode={openVoiceMode} onAgentsMode={openAgentsMode} currentPage={page} t={t} />}
+    {user && sidebarOpen && !isDeveloperPage && <button className="sidebar-backdrop" aria-label={t.closeSidebar} onClick={() => setSidebarOpen(false)} />}
     <div className="app-main">
-      {user && !sidebarOpen && <span className="header-name"><span>M Putra Ramadhani</span><small>AI INDONESIA</small></span>}
-      {user && page === "voice" ? (
+      {user && !sidebarOpen && (page === "chat" || page === "home" || page === "agents" || page === "voice") && (
+        <span className="header-name">
+          <span>M Putra Ramadhani</span>
+          <small>AI INDONESIA</small>
+        </span>
+      )}
+      {page === "api-console" || page === "api-keys" ? (
+        <FirebaseConsole user={user} userProfile={userProfile} onNavigate={navigateToPage} onOpenAuth={() => setShowAuthModal(true)} />
+      ) : isDeveloperPage ? (
+        <DeveloperPage page={page} onNavigate={navigateToPage} user={user} onOpenAuth={() => setShowAuthModal(true)} />
+      ) : user && page === "voice" ? (
         profileReady ? (
           <VoiceMode
             t={t}
@@ -3607,11 +5195,24 @@ function App() {
           />
         ) : (
           <div className="voice-page" aria-busy="true">
+            <div className="topbar visible voice-top"><div /></div>
             <div className="voice-stage">
               <span className="typing-indicator"><span /><span /><span /></span>
             </div>
           </div>
         )
+      ) : user && page === "agents" ? (
+        <AgentsMode
+          t={t}
+          lang={lang}
+          user={user}
+          userProfile={userProfile}
+          userPlan={userPlan}
+          selectedModel={selectedModel}
+          onSelectModel={handleSelectModel}
+          onUpgrade={() => navigateToPage("upgrade")}
+          onUpdateAgentsUsage={handleUpdateAgentsUsage}
+        />
       ) : user && page === "vouchers" ? (
         <VoucherPage
           t={t}
@@ -3621,7 +5222,7 @@ function App() {
           onRedeemFreeVoucher={redeemFreeVoucher}
           onNavigate={navigateToPage}
         />
-      ) : user && page !== "chat" ? (
+      ) : user && page !== "chat" && page !== "home" ? (
         <AccountPage
           page={page}
           user={user}
@@ -3782,7 +5383,7 @@ function App() {
                         ) : message.error ? (
                           <div className="error-msg">{message.error}</div>
                         ) : (
-                          <ChatMessageBody content={message.content} t={t} />
+                          <ChatMessageBody content={message.content} t={t} onSelectQuery={(q) => send(q)} />
                         )}
                       </div>
                     )}

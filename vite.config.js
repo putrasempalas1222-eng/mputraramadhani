@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import QRCode from "qrcode";
+import research from "./api/research.js";
+import keys from "./api/keys.js";
 
 const exhaustedKeys = new Set();
 let lastExhaustedReset = Date.now();
@@ -18,14 +20,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const plusPrice = Number(env.MIDTRANS_PLUS_PRICE || 500000);
   const apinexReferenceModels = {
-    "mputra/cepat": env.MODEL_MPUTRA_CEPAT || "",
-    "mputra/seimbang": env.MODEL_MPUTRA_SEIMBANG || "",
-    "mputra/kreatif": env.MODEL_MPUTRA_KREATIF || "",
-    "mputra/fokus": env.MODEL_MPUTRA_FOKUS || "",
-    "mputra/mendalam": env.MODEL_MPUTRA_MENDALAM || "",
-    "mputra/sempurna": env.MODEL_MPUTRA_SEMPURNA || "",
-    "mputra/petir": env.MODEL_MPUTRA_PETIR || "",
-    "mputra/presisi": env.MODEL_MPUTRA_PRESISI || "",
+    "mputra/cepat": env.MODEL_MPUTRA_CEPAT || env.APINEX_MODEL || ""
   };
   const kiraReferenceModels = {
     "mputra/v61-auto": env.MODEL_MPUTRA_V61_AUTO || "",
@@ -110,6 +105,9 @@ export default defineConfig(({ mode }) => {
       "import.meta.env.VITE_FIREBASE_MEASUREMENT_ID": JSON.stringify(
         env.VITE_FIREBASE_MEASUREMENT_ID || "G-QP2N8TW82W"
       ),
+      "import.meta.env.VITE_API_KEY_SIGNING_SECRET": JSON.stringify(
+        env.API_KEY_SIGNING_SECRET || env.VITE_API_KEY_SIGNING_SECRET || "gfbIfsCY_sYpSx8tZ0_UsjyFA59B7uejAHR7FxpXEKc"
+      ),
     },
     server: {
       host: true,
@@ -121,6 +119,8 @@ export default defineConfig(({ mode }) => {
       },
     },
     plugins: [{ name: "openrouter-server-proxy", configureServer(server) {
+      server.middlewares.use("/api/research", research);
+      server.middlewares.use("/api/keys", keys);
       server.middlewares.use((req, res, next) => {
         const fullUrl = req.url || "";
         const [pathname, search] = fullUrl.split("?");
@@ -169,7 +169,7 @@ export default defineConfig(({ mode }) => {
       server.middlewares.use("/api/chat", async (req, res) => {
         if (req.method !== "POST") { res.statusCode = 405; return res.end(); }
         const keys = [env.OPENROUTER_API_KEY, env.OPENROUTER_API_KEY_FALLBACK, env.OPENROUTER_API_KEY_FALLBACK_2, env.OPENROUTER_API_KEY_FALLBACK_3, env.OPENROUTER_API_KEY_FALLBACK_4, env.OPENROUTER_API_KEY_FALLBACK_5, env.OPENROUTER_API_KEY_FALLBACK_6, env.OPENROUTER_API_KEY_FALLBACK_7].map((key) => (key || "").trim()).filter(Boolean);
-        if (!keys.length && !env.KIRA_API_KEY && !env.TOKENROUTER_API_KEY && !env.ORCAROUTER_API_KEY && !env.APINEX_API_KEY) { res.statusCode = 500; return res.end(JSON.stringify({ error: "Kunci API belum dikonfigurasi di server." })); }
+        if (!keys.length && !env.KIRA_API_KEY && !env.TOKENROUTER_API_KEY && !env.ORCAROUTER_API_KEY && !env.CEOWEB3_API_KEY) { res.statusCode = 500; return res.end(JSON.stringify({ error: "Kunci API belum dikonfigurasi di server." })); }
         let raw = ""; for await (const part of req) raw += part;
         try {
           const body = JSON.parse(raw);
@@ -179,11 +179,14 @@ export default defineConfig(({ mode }) => {
           // Rantai cadangan penyedia: coba satu per satu sampai ada yang berhasil.
           // Alasan: satu provider (mis. kiraai.vn) bisa kehabisan saldo/rate limit, jangan biarkan chat mati total.
           const withSystem = (model) => JSON.stringify({ ...body, model, messages: [{ role: "system", content: identityPrompt }, ...messages] });
+          const openrouterModel = (body.model && !body.model.startsWith("mputra/")) ? body.model : (env.OPENROUTER_MODEL || "openrouter/free");
+          const openrouterPayload = withSystem(openrouterModel);
           const apinexReference = apinexReferenceModels[selectedModel];
           const kiraReference = kiraReferenceModels[selectedModel];
           const tokenrouterReference = tokenrouterReferenceModels[selectedModel];
           const orcarouterReference = orcarouterReferenceModels[selectedModel];
           const ceoweb3Reference = ceoweb3ReferenceModels[selectedModel];
+          const isDirectOpenRouter = !selectedModel.startsWith("mputra/") || selectedModel === "openrouter/free";
           const attempts = [];
           const ceoweb3Url = (env.CEOWEB3_API_URL || "").replace(/\/$/, "");
           const orcarouterUrl = (env.ORCAROUTER_API_URL || "").replace(/\/$/, "");
@@ -192,50 +195,76 @@ export default defineConfig(({ mode }) => {
           const apinexUrl = (env.APINEX_API_URL || "").replace(/\/$/, "");
           const openrouterUrl = (env.OPENROUTER_API_URL || "").replace(/\/$/, "");
 
-          if (ceoweb3Reference && env.CEOWEB3_API_KEY && ceoweb3Url) {
-            attempts.push({ url: `${ceoweb3Url}/chat/completions`, headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.CEOWEB3_API_KEY}` }, body: withSystem(ceoweb3Reference) });
-          }
-          if (orcarouterReference && env.ORCAROUTER_API_KEY && orcarouterUrl) {
-            attempts.push({ url: `${orcarouterUrl}/chat/completions`, headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.ORCAROUTER_API_KEY}` }, body: withSystem(orcarouterReference) });
-          }
-          if (tokenrouterReference && env.TOKENROUTER_API_KEY && tokenrouterUrl) {
-            attempts.push({ url: `${tokenrouterUrl}/chat/completions`, headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.TOKENROUTER_API_KEY}` }, body: withSystem(tokenrouterReference) });
-          }
-          if (kiraReference && env.KIRA_API_KEY && kiraUrl) {
-            attempts.push({ url: `${kiraUrl}/chat/completions`, headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.KIRA_API_KEY}` }, body: withSystem(kiraReference) });
-          }
-          if (apinexReference && env.APINEX_API_KEY && apinexUrl) {
-            attempts.push({ url: `${apinexUrl}/chat/completions`, headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.APINEX_API_KEY}`, "X-Title": "M Putra Ramadhani" }, body: withSystem(apinexReference) });
-          }
-          if (openrouterUrl) {
-            for (const key of keys) {
-              attempts.push({ url: `${openrouterUrl}/chat/completions`, headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, "X-Title": "M Putra Ramadhani" }, body: payload });
+          const addOpenRouterAttempts = () => {
+            if (openrouterUrl) {
+              for (const key of keys) {
+                attempts.push({ url: `${openrouterUrl}/chat/completions`, headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, "X-Title": "M Putra Ramadhani" }, body: openrouterPayload });
+              }
+              for (const key of keys.slice(0, 3)) {
+                attempts.push({ url: `${openrouterUrl}/chat/completions`, headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, "X-Title": "M Putra Ramadhani" }, body: withSystem("google/gemini-2.0-flash-exp:free") });
+              }
             }
+          };
+
+          if (isDirectOpenRouter) {
+            addOpenRouterAttempts();
+            if (kiraUrl && env.KIRA_API_KEY) {
+              attempts.push({ url: `${kiraUrl}/chat/completions`, headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.KIRA_API_KEY}` }, body: withSystem("kira-auto") });
+            }
+          } else {
+            if (kiraReference && env.KIRA_API_KEY && kiraUrl) {
+              attempts.push({ url: `${kiraUrl}/chat/completions`, headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.KIRA_API_KEY}` }, body: withSystem(kiraReference) });
+            }
+            if (tokenrouterReference && env.TOKENROUTER_API_KEY && tokenrouterUrl) {
+              attempts.push({ url: `${tokenrouterUrl}/chat/completions`, headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.TOKENROUTER_API_KEY}` }, body: withSystem(tokenrouterReference) });
+            }
+            if (orcarouterReference && env.ORCAROUTER_API_KEY && orcarouterUrl) {
+              attempts.push({ url: `${orcarouterUrl}/chat/completions`, headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.ORCAROUTER_API_KEY}` }, body: withSystem(orcarouterReference) });
+            }
+            if (ceoweb3Reference && env.CEOWEB3_API_KEY && ceoweb3Url) {
+              attempts.push({ url: `${ceoweb3Url}/chat/completions`, headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.CEOWEB3_API_KEY}` }, body: withSystem(ceoweb3Reference) });
+            }
+            addOpenRouterAttempts();
           }
-          if (env.APINEX_API_KEY && apinexUrl) {
-            attempts.push({ url: `${apinexUrl}/chat/completions`, headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.APINEX_API_KEY}`, "X-Title": "M Putra Ramadhani" }, body: withSystem(env.APINEX_MODEL || env.MODEL_MPUTRA_SEIMBANG || "") });
-          }
+
           let upstream = null;
           let lastStatus = 502;
           let lastText = "Tidak ada penyedia AI yang tersedia.";
-          for (const attempt of attempts) {
+          for (let i = 0; i < attempts.length; i++) {
+            const attempt = attempts[i];
             try {
-              upstream = await fetch(attempt.url, { method: "POST", headers: attempt.headers, body: attempt.body });
+              upstream = await fetch(attempt.url, {
+                method: "POST",
+                headers: attempt.headers,
+                body: attempt.body,
+                signal: AbortSignal.timeout(180000) // 180s untuk respons streaming panjang di lingkungan lokal
+              });
             } catch (providerError) {
+              console.warn(`[Failover] Koneksi ke ${attempt.url} gagal/timeout, beralih ke kunci berikutnya:`, providerError?.message);
               lastText = providerError?.message || "Penyedia AI tidak dapat dihubungi.";
               upstream = null;
               continue;
             }
             if (upstream.ok) break;
+            console.warn(`[Failover] Status ${upstream.status} dari ${attempt.url}, otomatis beralih ke API Key / penyedia berikutnya (Percobaan ${i + 1}/${attempts.length})...`);
             lastStatus = upstream.status;
             lastText = await upstream.text().catch(() => lastText);
             upstream = null;
           }
           if (!upstream || !upstream.ok) { res.statusCode = lastStatus; return res.end(lastText); }
-          res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
+          const upstreamContentType = upstream.headers.get("content-type") || "";
+          if (!upstreamContentType.includes("text/event-stream")) {
+            const payload = await upstream.json().catch(() => null);
+            if (!payload) { res.statusCode = 502; return res.end(JSON.stringify({ error: "Respons AI tidak dapat dibaca." })); }
+            res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive" });
+            res.write(`data: ${JSON.stringify(payload)}\n\n`);
+            res.write("data: [DONE]\n\n");
+            return res.end();
+          }
+          res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive" });
           for await (const chunk of upstream.body) res.write(chunk);
           res.end();
-        } catch (error) { res.statusCode = 502; res.end(JSON.stringify({ error: error.message || "Could not reach OpenRouter." })); }
+        } catch (error) { res.statusCode = 502; res.end(JSON.stringify({ error: error.message || "Could not reach AI provider." })); }
       });
       server.middlewares.use("/api/payments", async (req, res) => {
         const key = (env.MIDTRANS_SERVER_KEY || "").trim();
