@@ -64,6 +64,34 @@ async function getUserByApiKey(apiKey) {
   return null;
 }
 
+async function getUserByFirebaseToken(idToken) {
+  const webApiKey = process.env.FIREBASE_WEB_API_KEY;
+  const dbUrl = (process.env.FIREBASE_DATABASE_URL || process.env.VITE_FIREBASE_DATABASE_URL || "https://database-moyomo-default-rtdb.firebaseio.com").replace(/\/$/, "");
+  if (!webApiKey || !idToken) return null;
+
+  try {
+    const authResponse = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(webApiKey)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken }),
+      signal: AbortSignal.timeout(6000)
+    });
+    if (!authResponse.ok) return null;
+    const authPayload = await authResponse.json();
+    const uid = authPayload?.users?.[0]?.localId;
+    if (!uid) return null;
+
+    const profileResponse = await fetch(`${dbUrl}/users/${encodeURIComponent(uid)}/profile.json?auth=${encodeURIComponent(idToken)}`, {
+      signal: AbortSignal.timeout(6000)
+    });
+    const profile = profileResponse.ok ? await profileResponse.json().catch(() => ({})) : {};
+    return { uid, profile: profile || {}, dbUrl, firebaseToken: idToken };
+  } catch (err) {
+    console.warn("[Auth Firebase] Token tidak valid:", err?.message);
+    return null;
+  }
+}
+
 async function deductUserTokens(dbUrl, uid, tokensConsumed, charCount = 0) {
   if (!dbUrl || !uid || !tokensConsumed || tokensConsumed <= 0) return;
   try {
@@ -142,13 +170,19 @@ export default async function handler(req, res) {
   // Autentikasi API Key & Kuota Pengguna
   const authHeader = String(req.headers.authorization || req.headers["x-api-key"] || "").trim();
   const bearerKey = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : authHeader;
-  let authenticatedUser = null;
+  if (!authHeader || !authHeader.startsWith("Bearer ") || !bearerKey) {
+    return res.status(401).json({ error: "Authorization Bearer token wajib disertakan." });
+  }
 
-  if (bearerKey && bearerKey.startsWith("sk-")) {
-    authenticatedUser = await getUserByApiKey(bearerKey);
-    if (!authenticatedUser) {
-      return res.status(401).json({ error: "API Key tidak valid atau tidak ditemukan di database." });
-    }
+  const authenticatedUser = bearerKey.startsWith("sk-")
+    ? await getUserByApiKey(bearerKey)
+    : await getUserByFirebaseToken(bearerKey);
+
+  if (!authenticatedUser) {
+    return res.status(401).json({ error: bearerKey.startsWith("sk-") ? "API Key tidak valid atau tidak ditemukan di database." : "Sesi Firebase tidak valid. Login kembali lalu coba lagi." });
+  }
+
+  {
     // Cek Batas Kuota Token
     const isPlus = authenticatedUser.profile?.plan === "plus";
     const tokenLimit = isPlus ? 120000 : 7000;

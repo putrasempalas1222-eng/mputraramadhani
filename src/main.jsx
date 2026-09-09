@@ -4901,9 +4901,10 @@ function App() {
         });
         return { role, content: parts };
       });
+      const firebaseIdToken = await user.getIdToken();
       const response = await fetch(CONFIG.apiUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${firebaseIdToken}` },
         body: JSON.stringify({
           model: isVoice ? VOICE_CHAT_MODEL : selectedModel,
           messages: [{ role: "system", content: SYSTEM_PROMPT + SAFETY_RULES + (userPlan === "plus" ? "\n\nPaket Plus aktif: berikan penalaran yang lebih teliti, jawaban lebih lengkap bila diperlukan, dan pertahankan konteks percakapan." : "\n\nPaket Free: jawab langsung, akurat, dan ringkas tanpa mengurangi poin penting.") + (isVoice ? VOICE_SYSTEM_INSTRUCTION : "") }, ...apiMessages],

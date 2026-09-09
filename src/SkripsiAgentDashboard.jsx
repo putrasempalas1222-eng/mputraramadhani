@@ -313,10 +313,12 @@ export default function SkripsiAgentDashboard({
 
     for (const model of analysisModels) {
       try {
+        const firebaseIdToken = await user?.getIdToken();
+        if (!firebaseIdToken) throw new Error("Sesi login tidak ditemukan. Silakan login kembali.");
         response = await fetch(API_CHAT_URL, {
           method: "POST",
           signal: requestController.signal,
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${firebaseIdToken}` },
           body: JSON.stringify({
             model,
             agentMode: true,
@@ -488,10 +490,12 @@ export default function SkripsiAgentDashboard({
         setActivity(`Menghubungkan ke model cadangan (${activeModel})...`);
       }
       try {
+        const firebaseIdToken = await user?.getIdToken();
+        if (!firebaseIdToken) throw new Error("Sesi login tidak ditemukan. Silakan login kembali.");
         response = await fetch(API_CHAT_URL, {
           method: "POST",
           signal: requestController.signal,
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${firebaseIdToken}` },
           body: JSON.stringify({
             model: activeModel,
             agentMode: true,
