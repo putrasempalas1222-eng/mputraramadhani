@@ -253,8 +253,11 @@ export default async function handler(req, res) {
     };
   }
 
-  {
-    // Cek Batas Kuota Token
+  const body = req.body || {};
+  const isAgentOrDev = body.agentMode === true || (Boolean(authenticatedUser?.apiKey) && bearerKey.startsWith("sk-"));
+
+  if (isAgentOrDev) {
+    // Cek Batas Kuota Token khusus untuk AI Agents & API Developer
     const isPlus = authenticatedUser.profile?.plan === "plus";
     const tokenLimit = isPlus ? 40000 : 5000;
     const { todayKey, monthKey } = getJakartaPeriodKeys();
@@ -265,13 +268,12 @@ export default async function handler(req, res) {
 
     if (usedTokens >= tokenLimit) {
       return res.status(429).json({
-        error: `Batas kuota token akun Anda (${tokenLimit.toLocaleString("id-ID")} token) telah tercapai. Silakan upgrade ke Paket Plus.`
+        error: `Batas kuota token AI Agents akun Anda (${tokenLimit.toLocaleString("id-ID")} token) telah tercapai. Silakan upgrade ke Paket Plus.`
       });
     }
   }
 
   try {
-    const body = req.body || {};
     const requestedModel = String(body.model || "");
     const messages = Array.isArray(body.messages)
       ? body.messages.filter((message) => message.role !== "system")
@@ -586,7 +588,7 @@ export default async function handler(req, res) {
         }
       }
 
-      if (authenticatedUser) {
+      if (authenticatedUser && isAgentOrDev) {
         const choice = finalPayload?.choices?.[0] || {};
         const content = choice?.delta?.content ?? choice?.message?.content ?? choice?.text ?? finalPayload?.content ?? "";
         const textStr = typeof content === "string" ? content : (Array.isArray(content) ? content.map((p) => p?.text || "").join("") : JSON.stringify(content));
@@ -649,7 +651,7 @@ export default async function handler(req, res) {
     }
     res.end();
 
-    if (authenticatedUser && totalChars > 0) {
+    if (authenticatedUser && isAgentOrDev && totalChars > 0) {
       const tokensConsumed = Math.max(1, Math.ceil(totalChars / 3.5));
       void deductUserTokens(authenticatedUser.dbUrl, authenticatedUser.uid, tokensConsumed, totalChars);
     }
