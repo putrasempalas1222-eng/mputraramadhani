@@ -4245,6 +4245,26 @@ function VoucherPage({ t, lang = "id", claimedVouchers = {}, onClaimVoucher, onR
   );
 }
 
+const SYSTEM_UPDATE_VERSION = "2026-09-model-v6-2";
+
+function SystemUpdateModal({ onAcknowledge }) {
+  return (
+    <div className="system-update-overlay" role="dialog" aria-modal="true" aria-labelledby="system-update-title">
+      <section className="system-update-modal">
+        <div className="system-update-art-wrap" aria-hidden="true">
+          <img src="/systemupdate.png" alt="" className="system-update-art" />
+        </div>
+        <p className="system-update-kicker">PEMBARUAN SISTEM</p>
+        <h2 id="system-update-title">M Putra AI 6.2 dan Agents Akademik telah hadir</h2>
+        <p className="system-update-copy">
+          Gunakan M Putra AI 6.2 untuk kebutuhan harian Anda, atau pilih Agents Akademik untuk membantu riset, menyusun ide, dan mengerjakan tugas kampus.
+        </p>
+        <button type="button" className="system-update-confirm" onClick={onAcknowledge}>Mulai gunakan</button>
+      </section>
+    </div>
+  );
+}
+
 function App() {
   const [user, setUser] = useState(null);
   const [authReady, setAuthReady] = useState(false);
@@ -4612,6 +4632,33 @@ function App() {
   });
   const [securityToast, setSecurityToast] = useState("");
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showSystemUpdate, setShowSystemUpdate] = useState(false);
+  useEffect(() => {
+    if (!user?.uid || !profileReady || page !== "home") {
+      setShowSystemUpdate(false);
+      return;
+    }
+    let acknowledgedLocally = false;
+    try { acknowledgedLocally = localStorage.getItem(`system-update-ack:${user.uid}`) === SYSTEM_UPDATE_VERSION; } catch {}
+    setShowSystemUpdate(!acknowledgedLocally && userProfile?.systemUpdateVersion !== SYSTEM_UPDATE_VERSION);
+  }, [user?.uid, profileReady, page, userProfile?.systemUpdateVersion]);
+
+  const acknowledgeSystemUpdate = async () => {
+    if (!user?.uid) return;
+    setShowSystemUpdate(false);
+    const acknowledgement = {
+      systemUpdateVersion: SYSTEM_UPDATE_VERSION,
+      systemUpdateAcknowledgedAt: Date.now(),
+    };
+    try { localStorage.setItem(`system-update-ack:${user.uid}`, SYSTEM_UPDATE_VERSION); } catch {}
+    setUserProfile((current) => ({ ...(current || {}), ...acknowledgement }));
+    try {
+      await update(ref(db, `users/${user.uid}/profile`), acknowledgement);
+    } catch (error) {
+      // Cadangan lokal dipakai bila perangkat sedang offline.
+      console.warn("Gagal menyimpan status pembaruan sistem:", error?.code || error?.message);
+    }
+  };
   const bottom = useRef(null);
   // Do not leave the landing screen until at least one message has rendered.
   const inChat = messages.length > 0;
@@ -5166,6 +5213,9 @@ function App() {
   return <div className={`app app-shell ${user && sidebarOpen && !isDeveloperPage ? "drawer-open" : ""}`}>
     {((authReady && !user && (!isDeveloperPage || page === "api-console")) || (showAuthModal && !user)) && (
       <AuthModal t={t} onClose={() => setShowAuthModal(false)} />
+    )}
+    {user && page === "home" && showSystemUpdate && (
+      <SystemUpdateModal onAcknowledge={acknowledgeSystemUpdate} />
     )}
     {user && !isDeveloperPage && <Sidebar chats={chats} activeId={conversationId} onOpen={openChat} onNew={handleNewChat} onDelete={removeChat} user={user} isOpen={sidebarOpen} onToggle={() => setSidebarOpen((open) => !open)} onPage={navigateToPage} userPlan={userPlan} onVoiceMode={openVoiceMode} onAgentsMode={openAgentsMode} currentPage={page} t={t} />}
     {user && sidebarOpen && !isDeveloperPage && <button className="sidebar-backdrop" aria-label={t.closeSidebar} onClick={() => setSidebarOpen(false)} />}
