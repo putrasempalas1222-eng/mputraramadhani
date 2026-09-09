@@ -368,12 +368,25 @@ export default async function handler(req, res) {
       const statusText = await upstream?.text?.() || "Unknown error";
       return res.status(lastStatus).send(`Error: ${lastStatus} - ${statusText}`);
     }
+    const publicModelName = requestedModel || "mputra/v61-gratis";
+
     // Sebagian penyedia menerima `stream: true` namun mengembalikan JSON biasa.
     // Normalisasi ke SSE agar antarmuka chat selalu dapat membaca isi jawabannya.
     const upstreamContentType = upstream.headers.get("content-type") || "";
     if (!upstreamContentType.includes("text/event-stream")) {
       const payload = await upstream.json().catch(() => null);
       if (!payload) return res.status(502).json({ error: "Respons AI tidak dapat dibaca." });
+
+      if (payload && typeof payload === "object") {
+        payload.model = publicModelName;
+        if (payload.choices && Array.isArray(payload.choices)) {
+          for (const choice of payload.choices) {
+            if (body.agentMode !== true && choice?.message?.reasoning_content) {
+              delete choice.message.reasoning_content;
+            }
+          }
+        }
+      }
 
       if (authenticatedUser) {
         const choice = payload?.choices?.[0] || {};
@@ -400,27 +413,37 @@ export default async function handler(req, res) {
     const decoder = new TextDecoder();
 
     for await (const chunk of upstream.body) {
-      res.write(chunk);
-      if (authenticatedUser) {
-        try {
-          const textChunk = typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
-          const lines = textChunk.split(/\r?\n/);
-          for (const line of lines) {
-            if (line.startsWith("data:") && !line.includes("[DONE]")) {
-              const dataStr = line.slice(5).trim();
-              if (dataStr) {
-                try {
-                  const parsed = JSON.parse(dataStr);
-                  const delta = parsed?.choices?.[0]?.delta?.content ?? parsed?.choices?.[0]?.text ?? "";
-                  if (typeof delta === "string") {
-                    totalChars += delta.length;
-                  }
-                } catch {}
+      const textChunk = typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+      const lines = textChunk.split(/\r?\n/);
+      const sanitizedLines = [];
+
+      for (const line of lines) {
+        if (line.startsWith("data:") && !line.includes("[DONE]")) {
+          const dataStr = line.slice(5).trim();
+          if (dataStr) {
+            try {
+              const parsed = JSON.parse(dataStr);
+              parsed.model = publicModelName;
+              if (body.agentMode !== true && parsed?.choices?.[0]?.delta?.reasoning_content !== undefined) {
+                delete parsed.choices[0].delta.reasoning_content;
               }
+              const delta = parsed?.choices?.[0]?.delta?.content ?? parsed?.choices?.[0]?.text ?? "";
+              if (typeof delta === "string") {
+                totalChars += delta.length;
+              }
+              sanitizedLines.push(`data: ${JSON.stringify(parsed)}`);
+            } catch {
+              sanitizedLines.push(line.replace(/"model"\s*:\s*"[^"]+"/g, `"model":"${publicModelName}"`));
             }
+          } else {
+            sanitizedLines.push(line);
           }
-        } catch {}
+        } else {
+          sanitizedLines.push(line);
+        }
       }
+
+      res.write(sanitizedLines.join("\n") + (textChunk.endsWith("\n") ? "" : "\n"));
     }
     res.end();
 
