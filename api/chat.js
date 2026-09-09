@@ -179,7 +179,7 @@ export default async function handler(req, res) {
     : await getUserByFirebaseToken(bearerKey);
 
   if (!authenticatedUser) {
-    return res.status(401).json({ error: bearerKey.startsWith("sk-") ? "API Key tidak valid atau tidak ditemukan di database." : "Sesi Firebase tidak valid. Login kembali lalu coba lagi." });
+    return res.status(401).json({ error: "API key tidak valid atau tidak ditemukan." });
   }
 
   {

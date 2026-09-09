@@ -61,7 +61,7 @@ function checkExhaustedCacheReset() {
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+    return res.status(404).json({ error: "Endpoint tidak ditemukan." });
   }
 
   const { text, voiceId, gender, modelId, lang } = req.body || {};

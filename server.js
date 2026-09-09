@@ -99,25 +99,15 @@ CRITICAL MANDATORY INSTRUCTIONS:
 // Lampiran PDF dikirim sebagai base64, jadi perlu ruang lebih dari JSON chat biasa.
 app.use(express.json({ limit: "8mb" }));
 
-app.get("/api/models", async (_req, res) => {
-  try {
-    const openrouterBase = (process.env.OPENROUTER_API_URL || "").replace(/\/$/, "");
-    if (!openrouterBase) throw new Error("OPENROUTER_API_URL belum dikonfigurasi.");
-    const upstream = await fetch(`${openrouterBase}/models`);
-    if (!upstream.ok) throw new Error("Gagal mengambil model dari OpenRouter");
-    const json = await upstream.json();
-    const freeModels = (json.data || []).filter((m) => {
-      const isFree = m.id.endsWith(":free") ||
-        m.id === "openrouter/free" ||
-        (m.pricing && parseFloat(m.pricing.prompt) === 0 && parseFloat(m.pricing.completion) === 0);
-      const isGuard = m.id.toLowerCase().includes("guard") || m.id.toLowerCase().includes("moderation");
-      return isFree && !isGuard;
-    });
-    res.json({ models: freeModels });
-  } catch (error) {
-    res.status(502).json({ error: error.message || "Gagal menghubungi OpenRouter" });
-  }
+// API internal tidak dapat dibuka lewat navigasi address bar. Request fetch
+// dari fitur website tetap berjalan karena bukan navigasi "document".
+app.use("/api", (req, res, next) => {
+  const isDirectBrowserNavigation = req.headers["sec-fetch-dest"] === "document" || String(req.headers.accept || "").includes("text/html");
+  if (isDirectBrowserNavigation && req.path !== "/chat") return res.status(404).json({ error: "Endpoint tidak ditemukan." });
+  next();
 });
+
+app.all("/api/models", (_req, res) => res.status(404).json({ error: "Endpoint tidak ditemukan." }));
 
 // Gunakan handler yang sama dengan deployment agar aturan model, cooldown,
 // dan non-fallback tidak berbeda antara localhost dan production.

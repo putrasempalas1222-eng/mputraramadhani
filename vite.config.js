@@ -146,25 +146,10 @@ export default defineConfig(({ mode }) => {
         }
         next();
       });
-      server.middlewares.use("/api/models", async (req, res) => {
-        if (req.method !== "GET") { res.statusCode = 405; return res.end(); }
-        try {
-          const openrouterBase = (env.OPENROUTER_API_URL || "").replace(/\/$/, "");
-          if (!openrouterBase) throw new Error("OPENROUTER_API_URL belum dikonfigurasi.");
-          const resp = await fetch(`${openrouterBase}/models`);
-          if (!resp.ok) throw new Error("Gagal mengambil model dari OpenRouter");
-          const json = await resp.json();
-          const freeModels = (json.data || []).filter((m) =>
-            m.id.endsWith(":free") ||
-            m.id === "openrouter/free" ||
-            (m.pricing && parseFloat(m.pricing.prompt) === 0 && parseFloat(m.pricing.completion) === 0)
-          );
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ models: freeModels }));
-        } catch (error) {
-          res.statusCode = 502;
-          res.end(JSON.stringify({ error: error.message }));
-        }
+      server.middlewares.use("/api/models", (_req, res) => {
+        res.statusCode = 404;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: "Endpoint tidak ditemukan." }));
       });
       server.middlewares.use("/api/chat", async (req, res) => {
         if (req.method !== "POST") { res.statusCode = 405; return res.end(); }

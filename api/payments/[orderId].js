@@ -1,5 +1,6 @@
 export default async function handler(req, res) {
-  if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
+  const isDirectBrowserNavigation = req.headers?.["sec-fetch-dest"] === "document" || String(req.headers?.accept || "").includes("text/html");
+  if (isDirectBrowserNavigation || req.method !== "GET") return res.status(404).json({ error: "Endpoint tidak ditemukan." });
   const serverKey = (process.env.MIDTRANS_SERVER_KEY || "").trim();
   if (!serverKey) return res.status(503).json({ error: "Pembayaran QRIS belum dikonfigurasi." });
   try {

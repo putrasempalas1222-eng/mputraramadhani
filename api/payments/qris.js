@@ -42,7 +42,7 @@ async function paymentBreakdown(voucher, uid) {
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (req.method !== "POST") return res.status(404).json({ error: "Endpoint tidak ditemukan." });
   const serverKey = (process.env.MIDTRANS_SERVER_KEY || "").trim();
   if (!serverKey) return res.status(503).json({ error: "Pembayaran QRIS belum dikonfigurasi." });
   const { uid, email, name, method, voucher } = req.body || {};

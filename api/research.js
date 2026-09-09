@@ -11,7 +11,8 @@ export default async function research(req, res) {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.end(JSON.stringify(body));
   };
-  if (req.method !== "GET") return send(405, { error: "Gunakan GET." });
+  const isDirectBrowserNavigation = req.headers?.["sec-fetch-dest"] === "document" || String(req.headers?.accept || "").includes("text/html");
+  if (isDirectBrowserNavigation || req.method !== "GET") return send(404, { error: "Endpoint tidak ditemukan." });
   const search = new URL(req.url, "http://localhost").searchParams;
   const query = search.get("q")?.trim();
   const offset = Number(search.get("offset") || 0);
