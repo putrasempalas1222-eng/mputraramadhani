@@ -19,9 +19,6 @@ const CONFIG = {
   maxTokens: 2048,
 };
 
-// Endpoint Cloudflare Tunnel untuk clone suara milik pemilik.
-// Variabel environment memungkinkan URL diganti saat deployment tanpa edit kode.
-const VOICE_CLONE_API_URL = (import.meta.env.VITE_VOICE_CLONE_API_URL || "https://voice.mputraramadhani.id").replace(/\/$/, "");
 // Model khusus percakapan suara: respons cepat dan cocok untuk dialog singkat.
 const VOICE_CHAT_MODEL = "mputra/v61-mini";
 
@@ -688,7 +685,7 @@ function Composer({
         <div className="chat-limit-banner">
           <div className="chat-limit-left">
             <span className="chat-limit-text">
-              Token limit bulanan Agents Anda sudah habis, silakan upgrade ke Plus untuk mendapatkan 120.000 tokens limit!
+              Token limit bulanan Agents Anda sudah habis, silakan upgrade ke Plus untuk mendapatkan 40.000 tokens limit!
             </span>
           </div>
           <div className="chat-limit-actions">
@@ -1082,7 +1079,7 @@ function FirebaseConsole({ user, userProfile, onNavigate, onOpenAuth }) {
   const used = isPlus
     ? (usage.date === todayKey ? Number(usage.dailyTokens || 0) : 0)
     : (usage.month === monthKey ? Number(usage.monthTokens || 0) : 0);
-  const limit = isPlus ? 120000 : 7000;
+  const limit = isPlus ? 40000 : 5000;
   const percentage = Math.min(100, Math.round((used / Math.max(limit, 1)) * 100));
   const remainingTokens = Math.max(0, limit - used);
   const quotaPeriodLabel = isPlus ? "harian" : "bulanan";
@@ -1442,7 +1439,7 @@ print("Hasil Respons API:", data)`
                   </div>
                   <div className="developer-info-card">
                     <h4>Status Kuota</h4>
-                    <p>{isPlus ? "Paket Plus (120.000 Token/hari)" : "Paket Free (7.000 Token/bulan)"}</p>
+                    <p>{isPlus ? "Paket Plus (40.000 Token/hari)" : "Paket Free (5.000 Token/bulan)"}</p>
                   </div>
                 </div>
 
@@ -1496,7 +1493,7 @@ print("Hasil Respons API:", data)`
                   <div className="developer-info-card">
                     <h4>Paket Langganan</h4>
                     <p style={{ fontSize: "16px", fontWeight: "700", color: "var(--text)", margin: "4px 0" }}>{isPlus ? "Paket Plus (Aktif)" : "Paket Free"}</p>
-                    <p>{isPlus ? "120.000 Token / hari" : "7.000 Token / bulan"}</p>
+                    <p>{isPlus ? "40.000 Token / hari" : "5.000 Token / bulan"}</p>
                   </div>
                   <div className="developer-info-card">
                     <h4>Status Layanan</h4>
@@ -1524,7 +1521,7 @@ print("Hasil Respons API:", data)`
                     <div style={{ marginTop: "16px", paddingTop: "14px", borderTop: "1px solid #28282b", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
                       <div>
                         <b style={{ color: "var(--text)", fontSize: "13px" }}>Tingkatkan ke Paket Plus</b>
-                        <p style={{ margin: "2px 0 0", color: "var(--text-dim)", fontSize: "12px" }}>Dapatkan 120.000 token per hari dan prioritas komputasi cepat.</p>
+                        <p style={{ margin: "2px 0 0", color: "var(--text-dim)", fontSize: "12px" }}>Dapatkan 40.000 token per hari dan prioritas komputasi cepat.</p>
                       </div>
                       <button
                         type="button"
@@ -1719,7 +1716,7 @@ print("Hasil Respons API:", data)`
                         <td><strong>Paket Langganan</strong></td>
                         <td>
                           <span className={isPlus ? "developer-badge-req" : "developer-badge-opt"} style={{ color: isPlus ? "var(--accent-bright)" : "var(--text-dim)", background: isPlus ? "rgba(203, 168, 116, 0.15)" : "rgba(255, 255, 255, 0.06)" }}>
-                            {isPlus ? "Paket Plus (120.000 Token)" : "Paket Free (7.000 Token)"}
+                            {isPlus ? "Paket Plus (40.000 Token)" : "Paket Free (5.000 Token)"}
                           </span>
                         </td>
                         <td>—</td>
@@ -1909,13 +1906,13 @@ API_BASE_URL=https://mputraramadhani.id/api`}</code></pre>
                 <tbody>
                   <tr>
                     <td><strong>Paket Free</strong></td>
-                    <td><code>7.000 Token / bulan</code></td>
+                    <td><code>5.000 Token / bulan</code></td>
                     <td>Awal bulan kalender</td>
                     <td>Model standar v6.1, kecepatan standar</td>
                   </tr>
                   <tr>
                     <td><strong>Paket Plus</strong></td>
-                    <td><code>120.000 Token / hari</code></td>
+                    <td><code>40.000 Token / hari</code></td>
                     <td>Setiap hari pukul 00.00 WIB</td>
                     <td>Model reasoning mendalam (Deep Thinking), prioritas komputasi cepat, multimodal vision</td>
                   </tr>
@@ -2359,7 +2356,7 @@ else:
                   <tr>
                     <td><code>429 Too Many Requests</code></td>
                     <td>Kuota Habis / Rate Limit</td>
-                    <td>Kuota token bulanan akun Anda telah habis (Free: 7k token, Plus: 120k token). Upgrade ke Paket Plus atau tunggu reset awal bulan.</td>
+                    <td>Kuota token akun Anda telah habis (Free: 5k token/bulan, Plus: 40k token/hari). Upgrade ke Paket Plus atau tunggu reset.</td>
                   </tr>
                   <tr>
                     <td><code>502 Bad Gateway</code></td>
@@ -3166,41 +3163,17 @@ function VoiceMode({
 
     const curGender = voiceGenderRef.current;
 
-    // 1. Utamakan clone suara melalui Cloudflare Tunnel milik pemilik.
-    // Jika laptop/server offline, alur lanjut otomatis ke ElevenLabs.
     try {
-      let localResponse = null;
-      if (curGender === "female" || curGender === "male") {
-        try {
-          const voiceRequest = new Request(`${VOICE_CLONE_API_URL}/tts`, {
-            method: "POST",
-            // Chatterbox dapat memerlukan beberapa menit, terutama saat GPU
-            // sedang menangani permintaan lain. Jangan berpindah ke ElevenLabs
-            // hanya karena inferensi lokal melewati 20 detik.
-            signal: AbortSignal.timeout(300000),
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: clean, gender: curGender, language: lang === "en" ? "en" : "id" }),
-          });
-          localResponse = await fetch(voiceRequest);
-          if (!localResponse.ok) localResponse = null;
-        } catch {
-          localResponse = null;
-        }
-      }
-
-      let resp = localResponse;
-      if (!resp) {
-        resp = await fetch("/api/tts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            text: clean,
-            gender: curGender,
-            lang: lang || "id",
-            modelId: clean.length > 1000 ? "eleven_multilingual_v2" : "eleven_flash_v2_5",
-          }),
-        });
-      }
+      const resp = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: clean,
+          gender: curGender,
+          lang: lang || "id",
+          modelId: clean.length > 1000 ? "eleven_multilingual_v2" : "eleven_flash_v2_5",
+        }),
+      });
 
       if (resp.ok) {
         const arrayBuf = await resp.arrayBuffer();
@@ -3668,7 +3641,7 @@ function AccountPage({
   const agentsUsageData = userProfile?.agentsUsage || {};
 
   const isAgentsPlus = userPlan === "plus";
-  const agentsTokenLimit = isAgentsPlus ? 120000 : 7000;
+  const agentsTokenLimit = isAgentsPlus ? 40000 : 5000;
   const agentsUsedTokens = isAgentsPlus
     ? (agentsUsageData.date === todayKey ? Number(agentsUsageData.dailyTokens || 0) : 0)
     : (agentsUsageData.month === currentMonthKey ? Number(agentsUsageData.monthTokens || 0) : 0);
@@ -3929,7 +3902,7 @@ function AccountPage({
                       className="profile-sub-action"
                       onClick={() => onNavigate?.("upgrade")}
                     >
-                      {lang === "id" ? "Dapatkan 120rb/hari →" : "Get 120k/day →"}
+                      {lang === "id" ? "Dapatkan 40rb/hari →" : "Get 40k/day →"}
                     </button>
                   )}
                 </div>
@@ -4926,10 +4899,13 @@ function App() {
         });
         return { role, content: parts };
       });
-      const firebaseIdToken = await user.getIdToken();
+      const firebaseIdToken = user && typeof user.getIdToken === "function"
+        ? await user.getIdToken().catch(() => "")
+        : "";
+      const authHeaderValue = firebaseIdToken ? `Bearer ${firebaseIdToken}` : "Bearer guest";
       const response = await fetch(CONFIG.apiUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${firebaseIdToken}` },
+        headers: { "Content-Type": "application/json", Authorization: authHeaderValue },
         body: JSON.stringify({
           model: isVoice ? VOICE_CHAT_MODEL : selectedModel,
           messages: [{ role: "system", content: SYSTEM_PROMPT + SAFETY_RULES + (userPlan === "plus" ? "\n\nPaket Plus aktif: berikan penalaran yang lebih teliti, jawaban lebih lengkap bila diperlukan, dan pertahankan konteks percakapan." : "\n\nPaket Free: jawab langsung, akurat, dan ringkas tanpa mengurangi poin penting.") + (isVoice ? VOICE_SYSTEM_INSTRUCTION : "") }, ...apiMessages],

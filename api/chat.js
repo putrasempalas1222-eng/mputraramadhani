@@ -256,7 +256,7 @@ export default async function handler(req, res) {
   {
     // Cek Batas Kuota Token
     const isPlus = authenticatedUser.profile?.plan === "plus";
-    const tokenLimit = isPlus ? 120000 : 7000;
+    const tokenLimit = isPlus ? 40000 : 5000;
     const { todayKey, monthKey } = getJakartaPeriodKeys();
     const usage = authenticatedUser.profile?.agentsUsage || {};
     const usedTokens = isPlus

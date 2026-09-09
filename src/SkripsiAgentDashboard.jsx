@@ -313,12 +313,14 @@ export default function SkripsiAgentDashboard({
 
     for (const model of analysisModels) {
       try {
-        const firebaseIdToken = await user?.getIdToken();
-        if (!firebaseIdToken) throw new Error("Sesi login tidak ditemukan. Silakan login kembali.");
+        const firebaseIdToken = (user && typeof user.getIdToken === "function")
+          ? await user.getIdToken().catch(() => "")
+          : "";
+        const authHeaderValue = firebaseIdToken ? `Bearer ${firebaseIdToken}` : "Bearer guest";
         response = await fetch(API_CHAT_URL, {
           method: "POST",
           signal: requestController.signal,
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${firebaseIdToken}` },
+          headers: { "Content-Type": "application/json", Authorization: authHeaderValue },
           body: JSON.stringify({
             model,
             agentMode: true,
@@ -462,8 +464,8 @@ export default function SkripsiAgentDashboard({
     resetTimeout(60000); // 60s initial wait untuk respons panjang
 
     const planGuideline = userPlan === "plus"
-      ? "- STATUS PENGGUNA: PAKET PLUS (KUOTA HARIAN 120.000 TOKEN). Tuliskan kajian ilmiah secara TUNTAS, SANGAT MENDALAM, KOMPREHENSIF, dan LENGKAP dengan analisis, rumus, data, dan bukti ilmiah TANPA MEMOTONG pembahasan. Berikan jawaban FULL LENGTH dan TIDAK TERBATAS untuk setiap topik."
-      : "- STATUS PENGGUNA: PAKET FREE (KUOTA BULANAN 7.000 TOKEN). Tuliskan penjelasan ilmiah secara AKADEMIS, MENDALAM, TERSTRUKTUR, ARGUMENTATIF, dan BERBOBOT. Berikan FULL CONTEXT dan JAWABAN LENGKAP tanpa membatasi penjelasan secara kaku—prioritaskan KELENGKAPAN INFORMASI.";
+      ? "- STATUS PENGGUNA: PAKET PLUS (KUOTA HARIAN 40.000 TOKEN). Tuliskan kajian ilmiah secara TUNTAS, SANGAT MENDALAM, KOMPREHENSIF, dan LENGKAP dengan analisis, rumus, data, dan bukti ilmiah TANPA MEMOTONG pembahasan. Berikan jawaban FULL LENGTH dan TIDAK TERBATAS untuk setiap topik."
+      : "- STATUS PENGGUNA: PAKET FREE (KUOTA BULANAN 5.000 TOKEN). Tuliskan penjelasan ilmiah secara AKADEMIS, MENDALAM, TERSTRUKTUR, ARGUMENTATIF, dan BERBOBOT. Berikan FULL CONTEXT dan JAWABAN LENGKAP tanpa membatasi penjelasan secara kaku—prioritaskan KELENGKAPAN INFORMASI.";
 
     const allCandidateModels = [
       "mputra/v61-maya",
@@ -490,12 +492,14 @@ export default function SkripsiAgentDashboard({
         setActivity(`Menghubungkan ke model cadangan (${activeModel})...`);
       }
       try {
-        const firebaseIdToken = await user?.getIdToken();
-        if (!firebaseIdToken) throw new Error("Sesi login tidak ditemukan. Silakan login kembali.");
+        const firebaseIdToken = (user && typeof user.getIdToken === "function")
+          ? await user.getIdToken().catch(() => "")
+          : "";
+        const authHeaderValue = firebaseIdToken ? `Bearer ${firebaseIdToken}` : "Bearer guest";
         response = await fetch(API_CHAT_URL, {
           method: "POST",
           signal: requestController.signal,
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${firebaseIdToken}` },
+          headers: { "Content-Type": "application/json", Authorization: authHeaderValue },
           body: JSON.stringify({
             model: activeModel,
             agentMode: true,
@@ -1367,7 +1371,7 @@ export default function SkripsiAgentDashboard({
   const agentsUsage = userProfile?.agentsUsage || {};
 
   const isPlus = userPlan === "plus";
-  const agentsTokenLimit = isPlus ? 120000 : 7000;
+  const agentsTokenLimit = isPlus ? 40000 : 5000;
   const usedTokens = isPlus
     ? (agentsUsage.date === todayKey ? Number(agentsUsage.dailyTokens || 0) : 0)
     : (agentsUsage.month === currentMonthKey ? Number(agentsUsage.monthTokens || 0) : 0);
@@ -1379,9 +1383,9 @@ export default function SkripsiAgentDashboard({
       addAssistantMessage(
         isPlus
           ? "⚠️ **Batas Kuota Harian AI Agents Akademik Tercapai**\n\n" +
-            "Kuota 120.000 token untuk Paket Plus Anda telah tercapai untuk hari ini. Kuota akan otomatis di-reset besok pukul 00:00 WIB."
+            "Kuota 40.000 token untuk Paket Plus Anda telah tercapai untuk hari ini. Kuota akan otomatis di-reset besok pukul 00:00 WIB."
           : "⚠️ **Batas Kuota Bulanan AI Agents Akademik Tercapai**\n\n" +
-            "Kuota 7.000 token untuk Paket Free Anda telah tercapai untuk bulan ini. Kuota akan otomatis di-reset pada awal bulan berikutnya, atau silakan **Upgrade ke Paket Plus** untuk mendapatkan 120.000 token setiap hari!"
+            "Kuota 5.000 token untuk Paket Free Anda telah tercapai untuk bulan ini. Kuota akan otomatis di-reset pada awal bulan berikutnya, atau silakan **Upgrade ke Paket Plus** untuk mendapatkan 40.000 token setiap hari!"
       );
       return;
     }
