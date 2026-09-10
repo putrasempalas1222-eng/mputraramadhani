@@ -289,7 +289,6 @@ export default function SkripsiAgentDashboard({
     // Model instruksi cepat & presisi agar menghasilkan analisis penalaran Bahasa Indonesia yang langsung rapi & tuntas
     const analysisModels = [
       AGENT_FAST_MODEL,
-      "mputra/v61-maya",
       "mputra/v61-flash",
       "mputra/v62-astras-thinking"
     ];
@@ -468,7 +467,6 @@ export default function SkripsiAgentDashboard({
       : "- STATUS PENGGUNA: PAKET FREE (KUOTA BULANAN 5.000 TOKEN). Tuliskan penjelasan ilmiah secara AKADEMIS, MENDALAM, TERSTRUKTUR, ARGUMENTATIF, dan BERBOBOT. Berikan FULL CONTEXT dan JAWABAN LENGKAP tanpa membatasi penjelasan secara kaku—prioritaskan KELENGKAPAN INFORMASI.";
 
     const allCandidateModels = [
-      "mputra/v61-maya",
       AGENT_FAST_MODEL,
       "mputra/v61-flash",
       "mputra/v61-cepat",

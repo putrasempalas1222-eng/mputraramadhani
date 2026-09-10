@@ -288,15 +288,22 @@ export default async function handler(req, res) {
     });
 
     const kiraUrl = (process.env.KIRA_API_URL || "https://kiraai.vn/api/v1").replace(/\/$/, "");
-    const orcaUrl = (process.env.ORCAROUTER_API_URL || "https://api.orcarouter.ai/v1").replace(/\/$/, "");
     const tokenUrl = (process.env.TOKENROUTER_API_URL || "https://api.tokenrouter.com/v1").replace(/\/$/, "");
     const apinexUrl = (process.env.APINEX_API_URL || "https://api.apinex.bond/v1").replace(/\/$/, "");
     const ceoUrl = (process.env.CEOWEB3_FREE_API_URL || process.env.CEOWEB3_API_URL || "https://dashboard.ceoweb3.dev/v1").replace(/\/$/, "");
 
     const kiraKey = (process.env.KIRA_API_KEY || "").trim();
-    const orcaKey = (process.env.ORCAROUTER_API_KEY || "").trim();
     const tokenKey = (process.env.TOKENROUTER_API_KEY || "").trim();
-    const apinexKey = (process.env.APINEX_API_KEY || "").trim();
+    const apinexKeys = [
+      process.env.APINEX_API_KEY,
+      process.env.APINEX_API_KEY_FALLBACK,
+      process.env.APINEX_API_KEY_FALLBACK_2,
+      process.env.APINEX_API_KEY_FALLBACK_3,
+      process.env.APINEX_API_KEY_FALLBACK_4,
+      process.env.APINEX_API_KEY_FALLBACK_5,
+    ].map((key) => (key || "").trim()).filter(Boolean);
+    // Rute model menerima daftar key agar failover mencoba key APINEX berikutnya.
+    const apinexKey = apinexKeys;
     const ceoKey = (process.env.CEOWEB3_FREE_API_KEY || process.env.CEOWEB3_API_KEY || "").trim();
 
     const openrouterKeys = [
@@ -316,126 +323,103 @@ export default async function handler(req, res) {
       "mputra/v61-mini": [
         { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "glm-5.3-free", stream: false },
         { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "kira-auto", stream: false },
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "orcarouter/free", stream: false },
         { url: `${tokenUrl}/chat/completions`, key: tokenKey, model: "z-ai/glm-5.3-free", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/gemini-3.8-flash", stream: false }
       ],
       "mputra/v61-auto": [
         { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "glm-5.3-free", stream: false },
         { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "kira-auto", stream: false },
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "orcarouter/free", stream: false },
         { url: `${tokenUrl}/chat/completions`, key: tokenKey, model: "z-ai/glm-5.3-free", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/qwen-3.8-max", stream: false }
       ],
       "mputra/v61-cepat": [
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "tencent/hy3-free", stream: false },
         { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "hy3-free", stream: false },
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "deepseek/deepseek-v4-flash-free", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/gemini-3.8-flash", stream: false }
       ],
       "mputra/v61-analisis": [
         { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "kira-auto", stream: false },
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "deepseek/deepseek-v4-flash-free", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/deepseek-v4-pro-0813", stream: false }
       ],
       "mputra/v61-lite": [
         { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "glm-5.3-free", stream: false },
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "orcarouter/free", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/glm-5.3-flash", stream: false }
       ],
       "mputra/v61-flash": [
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "deepseek/deepseek-v4-flash-free", stream: false },
         { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "glm-5.3-flash-free", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/deepseek-v4-flash-0731", stream: false }
       ],
       "mputra/v61-vision": [
-        { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "qwen3.8-flash-free", stream: false },
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "deepseek/deepseek-v4-flash-free", stream: false },
+        { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "glm-5.3-flash-free", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/qwen-3.8-max", stream: false }
       ],
       "mputra/v61-peduli": [
-        { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "ling-3.0-flash-sante-free", stream: false },
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "orcarouter/free", stream: false },
+        { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "mimo-v2.5-free", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/muse-spark-1.3", stream: false }
       ],
       "mputra/v61-fokus": [
-        { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "qwen3.8-27b-free", stream: false },
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "deepseek/deepseek-v4-flash-free", stream: false },
+        { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "glm-5.3-free", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/glm-5.3-flash", stream: false }
       ],
       "mputra/v61-gratis": [
         { url: `${tokenUrl}/chat/completions`, key: tokenKey, model: "z-ai/glm-5.3-free", stream: false },
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "orcarouter/free", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/gemini-3.8-flash", stream: false }
       ],
-      "mputra/v61-maya": [
-        { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "glm-5.3-free", stream: false },
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "orcarouter/free", stream: false },
-        { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/gpt-5.6-luna", stream: false }
-      ],
       "mputra/v62-astras-thinking": [
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "deepseek/deepseek-v4-flash-free", stream: false },
+        { url: `${ceoUrl}/chat/completions`, key: ceoKey, model: "glm-5.3:free", stream: false },
         { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "kira-auto", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/deepseek-v4-pro-0813", stream: false }
       ],
       "mputra/v62-astras-flash": [
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "deepseek/deepseek-v4-flash-free", stream: false },
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "orcarouter/free", stream: false },
+        { url: `${ceoUrl}/chat/completions`, key: ceoKey, model: "gemini-3.6-flash:free", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/gemini-3.8-flash", stream: false }
       ],
       "mputra/v62-astras-medium": [
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "orcarouter/free", stream: false },
+        { url: `${ceoUrl}/chat/completions`, key: ceoKey, model: "glm-5.3:free", stream: false },
         { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "glm-5.3-free", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/gemini-3.1-pro", stream: false }
       ],
       "mputra/v62-trunty-flash": [
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "deepseek/deepseek-v4-flash-free", stream: false },
-        { url: `${ceoUrl}/chat/completions`, key: ceoKey, model: "gemini-3.6-flash:free", stream: false },
+        { url: `${ceoUrl}/chat/completions`, key: ceoKey, model: "step-3.7-flash:free", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/gemini-3.8-flash", stream: false }
       ],
       "mputra/v62-dola": [
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "orcarouter/free", stream: false },
+        { url: `${ceoUrl}/chat/completions`, key: ceoKey, model: "gemini-3.6-flash:free", stream: false },
         { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "kira-auto", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/qwen-3.8-max", stream: false }
       ],
       "mputra/v62-trunty-thinking": [
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "deepseek/deepseek-v4-flash-free", stream: false },
+        { url: `${ceoUrl}/chat/completions`, key: ceoKey, model: "glm-5.3:free", stream: false },
         { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "kira-auto", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/deepseek-v4-pro-0813", stream: false }
       ],
       "mputra/v62-hunyuan": [
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "tencent/hy3-free", stream: false },
+        { url: `${ceoUrl}/chat/completions`, key: ceoKey, model: "gemini-3.6-flash:free", stream: false },
         { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "hy3-free", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/gemini-3.8-flash", stream: false }
       ],
       "mputra/cepat": [
         { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "kira-auto", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/gemini-3.8-flash", stream: false },
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "orcarouter/free", stream: false }
       ],
       "mputra/seimbang": [
         { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "kira-auto", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/qwen-3.8-max", stream: false },
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "orcarouter/free", stream: false }
       ],
       "mputra/kreatif": [
-        { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "ling-3.0-flash-sante-free", stream: false },
+        { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "mimo-v2.5-free", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/muse-spark-1.3", stream: false }
       ],
       "mputra/fokus": [
-        { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "qwen3.8-27b-free", stream: false },
+        { url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "glm-5.3-free", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/glm-5.3-flash", stream: false }
       ],
       "mputra/mendalam": [
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "deepseek/deepseek-v4-flash-free", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/deepseek-v4-pro-0813", stream: false }
       ],
       "mputra/sempurna": [
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "orcarouter/free", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/gemini-3.1-pro", stream: false }
       ],
       "mputra/petir": [
-        { url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "deepseek/deepseek-v4-flash-free", stream: false },
         { url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/deepseek-v4-flash-0731", stream: false }
       ],
       "mputra/presisi": [
@@ -448,13 +432,16 @@ export default async function handler(req, res) {
     const definedRoute = modelRoutes[requestedModel];
     if (definedRoute) {
       for (const route of definedRoute) {
-        if (route.key && route.url) {
-          rawAttempts.push({
-            url: route.url,
-            key: route.key,
-            model: route.model,
-            stream: route.stream
-          });
+        const routeKeys = Array.isArray(route.key) ? route.key : [route.key];
+        for (const routeKey of routeKeys) {
+          if (routeKey && route.url) {
+            rawAttempts.push({
+              url: route.url,
+              key: routeKey,
+              model: route.model,
+              stream: route.stream
+            });
+          }
         }
       }
     }
@@ -463,17 +450,14 @@ export default async function handler(req, res) {
     if (kiraKey && kiraUrl) {
       rawAttempts.push({ url: `${kiraUrl}/chat/completions`, key: kiraKey, model: "kira-auto", stream: false });
     }
-    if (orcaKey && orcaUrl) {
-      rawAttempts.push({ url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "tencent/hy3-free", stream: false });
-      rawAttempts.push({ url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "orcarouter/free", stream: false });
-      rawAttempts.push({ url: `${orcaUrl}/chat/completions`, key: orcaKey, model: "deepseek/deepseek-v4-flash-free", stream: false });
-    }
     if (tokenKey && tokenUrl) {
       rawAttempts.push({ url: `${tokenUrl}/chat/completions`, key: tokenKey, model: "z-ai/glm-5.3-free", stream: false });
     }
-    if (apinexKey && apinexUrl) {
-      rawAttempts.push({ url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/gemini-3.8-flash", stream: false });
-      rawAttempts.push({ url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/qwen-3.8-max", stream: false });
+    if (apinexKeys.length && apinexUrl) {
+      for (const apinexKey of apinexKeys) {
+        rawAttempts.push({ url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/gemini-3.8-flash", stream: false });
+        rawAttempts.push({ url: `${apinexUrl}/chat/completions`, key: apinexKey, model: "free/qwen-3.8-max", stream: false });
+      }
     }
     for (const orKey of openrouterKeys) {
       rawAttempts.push({ url: `${openrouterUrl}/chat/completions`, key: orKey, model: "nex-agi/nex-n2.5-mini:free", stream: false });

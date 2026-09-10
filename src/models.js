@@ -95,16 +95,6 @@ export const CURATED_FREE_MODELS = [
     available: true,
   },
   {
-    id: "mputra/v61-maya",
-    name: "MPutraAI V6.1 Maya",
-    provider: "M Putra Ramadhani",
-    contextLength: "128K",
-    description: "Model ringan dan ramah untuk pendamping belajar.",
-    badge: "Aktif",
-    tier: "plus",
-    available: true,
-  },
-  {
     id: "mputra/v61-fokus",
     name: "MPutraAI V6.1 Focus",
     provider: "M Putra Ramadhani",
